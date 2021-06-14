@@ -1,10 +1,21 @@
 use objc2::foundation::NSObject;
 use objc2::rc::{Id, Shared};
-use objc2::runtime::Object;
+use objc2::runtime::{Object, Sel};
+use objc2::{class, sel};
 use objc2::{declare_class, msg_send, msg_send_id, ClassType};
 
-use super::app_state::AppState;
+use crate::event::{Event, MacOS, PlatformSpecific};
+use crate::platform_impl::platform::{app_state::AppState, event::EventWrapper};
+
 use super::appkit::NSApplicationActivationPolicy;
+
+/// Apple constants
+#[allow(non_upper_case_globals)]
+pub const kInternetEventClass: u32 = 0x4755524c;
+#[allow(non_upper_case_globals)]
+pub const kAEGetURL: u32 = 0x4755524c;
+#[allow(non_upper_case_globals)]
+pub const keyDirectObject: u32 = 0x2d2d2d2d;
 
 declare_class!(
     #[derive(Debug)]
@@ -46,6 +57,31 @@ declare_class!(
             );
         }
 
+        #[sel(applicationWillFinishLaunching:)]
+        fn will_finish_launching(&self, _sender: *const Object) {
+            trace!("Triggered `applicationWillFinishLaunching`");
+            unsafe {
+                let event_manager = class!(NSAppleEventManager);
+                let shared_manager: *mut Object = msg_send![event_manager, sharedAppleEventManager];
+                let () = msg_send![shared_manager,
+                    setEventHandler: self,
+                    andSelector: sel!(handleEvent:withReplyEvent:)
+                    forEventClass: kInternetEventClass
+                    andEventID: kAEGetURL
+                ];
+            }
+            trace!("Completed `applicationWillFinishLaunching`");
+        }
+
+        #[sel(handleEvent:withReplyEvent:)]
+        fn handle_url(&self, _cmd: Sel, event: *mut Object, _reply: u64) {
+            if let Some(string) = parse_url(event) {
+                AppState::queue_event(EventWrapper::StaticEvent(Event::PlatformSpecific(
+                    PlatformSpecific::MacOS(MacOS::ReceivedUrl(string)),
+                )));
+            }
+        }
+
         #[sel(applicationWillTerminate:)]
         fn will_terminate(&self, _sender: *const Object) {
             trace_scope!("applicationWillTerminate:");
@@ -68,6 +104,29 @@ impl ApplicationDelegate {
                 defaultMenu: default_menu,
                 activateIgnoringOtherApps: activate_ignoring_other_apps,
             ]
+        }
+    }
+}
+
+fn parse_url(event: *mut Object) -> Option<String> {
+    unsafe {
+        let class: u32 = msg_send![event, eventClass];
+        let id: u32 = msg_send![event, eventID];
+        if class != kInternetEventClass || id != kAEGetURL {
+            return None;
+        }
+        let subevent: *mut Object =
+            msg_send![event, paramDescriptorForKeyword: keyDirectObject];
+        let nsstring: *mut Object = msg_send![subevent, stringValue];
+        let cstr: *const i8 = msg_send![nsstring, UTF8String];
+        if !cstr.is_null() {
+            Some(
+                std::ffi::CStr::from_ptr(cstr)
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        } else {
+            None
         }
     }
 }
