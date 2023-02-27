@@ -281,25 +281,7 @@ declare_class!(
             proposed_options: NSApplicationPresentationOptions,
         ) -> NSApplicationPresentationOptions {
             trace_scope!("window:willUseFullScreenPresentationOptions:");
-            // Generally, games will want to disable the menu bar and the dock. Ideally,
-            // this would be configurable by the user. Unfortunately because of our
-            // `CGShieldingWindowLevel() + 1` hack (see `set_fullscreen`), our window is
-            // placed on top of the menu bar in exclusive fullscreen mode. This looks
-            // broken so we always disable the menu bar in exclusive fullscreen. We may
-            // still want to make this configurable for borderless fullscreen. Right now
-            // we don't, for consistency. If we do, it should be documented that the
-            // user-provided options are ignored in exclusive fullscreen.
-            let mut options = proposed_options;
-            let shared_state = self
-                .window
-                .lock_shared_state("window_will_use_fullscreen_presentation_options");
-            if let Some(Fullscreen::Exclusive(_)) = shared_state.fullscreen {
-                options = NSApplicationPresentationOptions::NSApplicationPresentationFullScreen
-                    | NSApplicationPresentationOptions::NSApplicationPresentationHideDock
-                    | NSApplicationPresentationOptions::NSApplicationPresentationHideMenuBar;
-            }
-
-            options
+            proposed_options
         }
 
         /// Invoked when entered fullscreen
