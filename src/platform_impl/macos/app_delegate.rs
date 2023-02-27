@@ -115,8 +115,7 @@ fn parse_url(event: *mut Object) -> Option<String> {
         if class != kInternetEventClass || id != kAEGetURL {
             return None;
         }
-        let subevent: *mut Object =
-            msg_send![event, paramDescriptorForKeyword: keyDirectObject];
+        let subevent: *mut Object = msg_send![event, paramDescriptorForKeyword: keyDirectObject];
         let nsstring: *mut Object = msg_send![subevent, stringValue];
         let cstr: *const i8 = msg_send![nsstring, UTF8String];
         if !cstr.is_null() {
