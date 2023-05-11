@@ -1,6 +1,6 @@
 use objc2::foundation::NSObject;
 use objc2::rc::{Id, Shared};
-use objc2::runtime::{Object, Sel};
+use objc2::runtime::Object;
 use objc2::{class, sel};
 use objc2::{declare_class, msg_send, msg_send_id, ClassType};
 
@@ -74,7 +74,7 @@ declare_class!(
         }
 
         #[sel(handleEvent:withReplyEvent:)]
-        fn handle_url(&self, _cmd: Sel, event: *mut Object, _reply: u64) {
+        fn handle_url(&self, event: *mut Object, _reply: u64) {
             if let Some(string) = parse_url(event) {
                 AppState::queue_event(EventWrapper::StaticEvent(Event::PlatformSpecific(
                     PlatformSpecific::MacOS(MacOS::ReceivedUrl(string)),
