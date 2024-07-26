@@ -11,6 +11,7 @@ mod ffi;
 mod menu;
 mod monitor;
 mod observer;
+mod standard_key_binding;
 mod view;
 mod window;
 mod window_delegate;
@@ -32,6 +33,8 @@ pub(crate) use self::window::Window;
 pub(crate) use crate::cursor::OnlyCursorImageSource as PlatformCustomCursorSource;
 pub(crate) use crate::icon::NoIcon as PlatformIcon;
 pub(crate) use crate::platform_impl::Fullscreen;
+
+pub use self::standard_key_binding::AppleStandardKeyBindingAction;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeviceId;

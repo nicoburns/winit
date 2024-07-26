@@ -453,6 +453,9 @@ impl ApplicationHandler<UserEvent> for Application {
             | WindowEvent::Destroyed
             | WindowEvent::Touch(_)
             | WindowEvent::Moved(_) => (),
+
+            #[cfg(target_os = "macos")]
+            WindowEvent::AppleStandardKeyBindingAction(_) => (),
         }
     }
 
