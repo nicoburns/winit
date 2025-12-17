@@ -868,7 +868,7 @@ impl WinitView {
     }
 
     pub(super) fn set_ime_allowed(&self, capabilities: Option<ImeCapabilities>) {
-        if self.ivars().ime_capabilities.get().is_some() {
+        if self.ivars().ime_capabilities.get().is_some() && capabilities.is_some() {
             return;
         }
         self.ivars().ime_capabilities.set(capabilities);
