@@ -879,6 +879,8 @@ impl WinitView {
 
         // Clear markedText
         *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
+        let input_context = self.inputContext().expect("input context");
+        input_context.discardMarkedText();
 
         if self.ivars().ime_state.get() != ImeState::Disabled {
             self.ivars().ime_state.set(ImeState::Disabled);
