@@ -5,6 +5,7 @@ fn main() -> Result<(), impl std::error::Error> {
 
     use softbuffer::{Context, Surface};
     use tracing::info;
+    use winit::Instant;
     use winit::application::ApplicationHandler;
     use winit::dpi::{LogicalPosition, LogicalSize, Position};
     use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -53,6 +54,7 @@ fn main() -> Result<(), impl std::error::Error> {
             &mut self,
             event_loop: &dyn ActiveEventLoop,
             window_id: winit::window::WindowId,
+            _timestamp: Instant,
             event: WindowEvent,
         ) {
             match event {

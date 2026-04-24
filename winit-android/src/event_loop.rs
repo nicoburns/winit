@@ -201,12 +201,12 @@ impl EventLoop {
                 MainEvent::GainedFocus => {
                     HAS_FOCUS.store(true, Ordering::Relaxed);
                     let event = event::WindowEvent::Focused(true);
-                    app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                    app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                 },
                 MainEvent::LostFocus => {
                     HAS_FOCUS.store(false, Ordering::Relaxed);
                     let event = event::WindowEvent::Focused(false);
-                    app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                    app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                 },
                 MainEvent::ConfigChanged { .. } => {
                     let old_scale_factor = scale_factor(&self.android_app);
@@ -220,7 +220,7 @@ impl EventLoop {
                             scale_factor,
                         };
 
-                        app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                        app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                     }
                 },
                 MainEvent::LowMemory => {
@@ -297,14 +297,14 @@ impl EventLoop {
                     PhysicalSize::new(0, 0)
                 };
                 let event = event::WindowEvent::SurfaceResized(size);
-                app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
             }
 
             pending_redraw |= self.redraw_flag.get_and_reset();
             if pending_redraw {
                 pending_redraw = false;
                 let event = event::WindowEvent::RedrawRequested;
-                app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
             }
         }
 
@@ -371,7 +371,7 @@ impl EventLoop {
                                     _ => event::PointerKind::Unknown,
                                 },
                             };
-                            app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                             let event = event::WindowEvent::PointerButton {
                                 device_id,
                                 primary,
@@ -387,7 +387,7 @@ impl EventLoop {
                                 },
                                 is_macos_activation_click: false,
                             };
-                            app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                         },
                         MotionAction::Move => {
                             let primary = self.primary_pointer == Some(finger_id);
@@ -404,7 +404,7 @@ impl EventLoop {
                                     _ => event::PointerSource::Unknown,
                                 },
                             };
-                            app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                         },
                         MotionAction::Up | MotionAction::PointerUp | MotionAction::Cancel => {
                             let primary = action == MotionAction::Up
@@ -431,7 +431,7 @@ impl EventLoop {
                                     },
                                     is_macos_activation_click: false,
                                 };
-                                app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                                app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                             }
 
                             let event = event::WindowEvent::PointerLeft {
@@ -447,7 +447,7 @@ impl EventLoop {
                                     _ => event::PointerKind::Unknown,
                                 },
                             };
-                            app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                         },
                         _ => unreachable!(),
                     }
@@ -499,7 +499,7 @@ impl EventLoop {
                             is_synthetic: false,
                         };
 
-                        app.window_event(&self.window_target, GLOBAL_WINDOW, event);
+                        app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
                     },
                 }
             },

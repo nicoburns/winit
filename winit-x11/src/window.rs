@@ -6,6 +6,7 @@ use std::ops::Deref;
 use std::os::raw::*;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 use std::{cmp, env};
 
 use dpi::{PhysicalInsets, PhysicalPosition, PhysicalSize, Position, Size};
@@ -1261,7 +1262,7 @@ impl UnownedWindow {
 
             let old_surface_size = PhysicalSize::new(width, height);
             let surface_size = Arc::new(Mutex::new(PhysicalSize::new(new_width, new_height)));
-            app.window_event(event_loop, self.id(), WindowEvent::ScaleFactorChanged {
+            app.window_event(event_loop, self.id(), Instant::now(), WindowEvent::ScaleFactorChanged {
                 scale_factor: new_monitor.scale_factor,
                 surface_size_writer: SurfaceSizeWriter::new(Arc::downgrade(&surface_size)),
             });

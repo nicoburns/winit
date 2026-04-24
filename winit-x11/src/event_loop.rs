@@ -414,6 +414,7 @@ impl EventLoop {
             active_window: None,
             modifiers: Default::default(),
             is_composing: false,
+            event_time: Cell::new(Instant::now()),
         };
 
         // Register for device hotplug events
@@ -613,7 +614,12 @@ impl EventLoop {
                         serial,
                         token: winit_core::window::ActivationToken::from_raw(token),
                     };
-                    app.window_event(&self.event_processor.target, window_id, event);
+                    app.window_event(
+                        &self.event_processor.target,
+                        window_id,
+                        Instant::now(),
+                        event,
+                    );
                 },
                 Some(Err(e)) => {
                     tracing::error!("Failed to get activation token: {}", e);
@@ -639,6 +645,7 @@ impl EventLoop {
                 app.window_event(
                     &self.event_processor.target,
                     window_id,
+                    Instant::now(),
                     WindowEvent::RedrawRequested,
                 );
             }

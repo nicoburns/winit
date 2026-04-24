@@ -51,8 +51,8 @@ type WaylandDispatcher = calloop::Dispatcher<'static, WaylandSource<WinitState>,
 
 #[derive(Debug)]
 pub(crate) enum Event {
-    WindowEvent { window_id: WindowId, event: WindowEvent },
-    DeviceEvent { event: DeviceEvent },
+    WindowEvent { window_id: WindowId, event: WindowEvent, timestamp: Instant },
+    DeviceEvent { event: DeviceEvent, timestamp: Instant },
 }
 
 /// The Wayland event loop.
@@ -390,7 +390,7 @@ impl EventLoop {
                     surface_size_writer: SurfaceSizeWriter::new(Arc::downgrade(&new_surface_size)),
                 };
 
-                app.window_event(&self.active_event_loop, window_id, event);
+                app.window_event(&self.active_event_loop, window_id, Instant::now(), event);
 
                 let physical_size = *new_surface_size.lock().unwrap();
                 drop(new_surface_size);
@@ -433,11 +433,16 @@ impl EventLoop {
                 });
 
                 let event = WindowEvent::SurfaceResized(physical_size);
-                app.window_event(&self.active_event_loop, window_id, event);
+                app.window_event(&self.active_event_loop, window_id, Instant::now(), event);
             }
 
             if compositor_update.close_window {
-                app.window_event(&self.active_event_loop, window_id, WindowEvent::CloseRequested);
+                app.window_event(
+                    &self.active_event_loop,
+                    window_id,
+                    Instant::now(),
+                    WindowEvent::CloseRequested,
+                );
             }
         }
 
@@ -447,11 +452,11 @@ impl EventLoop {
         });
         for event in buffer_sink.drain() {
             match event {
-                Event::WindowEvent { window_id, event } => {
-                    app.window_event(&self.active_event_loop, window_id, event)
+                Event::WindowEvent { window_id, event, timestamp } => {
+                    app.window_event(&self.active_event_loop, window_id, timestamp, event)
                 },
-                Event::DeviceEvent { event } => {
-                    app.device_event(&self.active_event_loop, None, event)
+                Event::DeviceEvent { event, timestamp } => {
+                    app.device_event(&self.active_event_loop, None, timestamp, event)
                 },
             }
         }
@@ -462,11 +467,11 @@ impl EventLoop {
         });
         for event in buffer_sink.drain() {
             match event {
-                Event::WindowEvent { window_id, event } => {
-                    app.window_event(&self.active_event_loop, window_id, event)
+                Event::WindowEvent { window_id, event, timestamp } => {
+                    app.window_event(&self.active_event_loop, window_id, timestamp, event)
                 },
-                Event::DeviceEvent { event } => {
-                    app.device_event(&self.active_event_loop, None, event)
+                Event::DeviceEvent { event, timestamp } => {
+                    app.device_event(&self.active_event_loop, None, timestamp, event)
                 },
             }
         }
@@ -532,7 +537,7 @@ impl EventLoop {
             });
 
             if let Some(event) = event {
-                app.window_event(&self.active_event_loop, *window_id, event);
+                app.window_event(&self.active_event_loop, *window_id, Instant::now(), event);
             }
         }
 

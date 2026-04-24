@@ -20,11 +20,15 @@ impl TouchHandler for WinitState {
         _: &QueueHandle<Self>,
         touch: &WlTouch,
         serial: u32,
-        _: u32,
+        time: u32,
         surface: WlSurface,
         id: i32,
         position: (f64, f64),
     ) {
+        let timestamp = WinitState::resolve_compositor_time_ms(
+            &self.compositor_time_ms_anchor,
+            time,
+        );
         let window_id = crate::make_wid(&surface);
         let scale_factor = match self.windows.get_mut().get(&window_id) {
             Some(window) => {
@@ -56,7 +60,7 @@ impl TouchHandler for WinitState {
         let position = location.to_physical(scale_factor);
         let finger_id = FingerId::from_raw(id as usize);
 
-        self.events_sink.push_window_event(
+        self.events_sink.push_window_event_at(
             WindowEvent::PointerEntered {
                 device_id: None,
                 primary,
@@ -64,8 +68,9 @@ impl TouchHandler for WinitState {
                 kind: PointerKind::Touch(finger_id),
             },
             window_id,
+            timestamp,
         );
-        self.events_sink.push_window_event(
+        self.events_sink.push_window_event_at(
             WindowEvent::PointerButton {
                 device_id: None,
                 primary,
@@ -75,6 +80,7 @@ impl TouchHandler for WinitState {
                 is_macos_activation_click: false,
             },
             window_id,
+            timestamp,
         );
     }
 
@@ -83,10 +89,14 @@ impl TouchHandler for WinitState {
         _: &Connection,
         _: &QueueHandle<Self>,
         touch: &WlTouch,
-        _: u32,
-        _: u32,
+        _serial: u32,
+        time: u32,
         id: i32,
     ) {
+        let timestamp = WinitState::resolve_compositor_time_ms(
+            &self.compositor_time_ms_anchor,
+            time,
+        );
         let seat_state = match self.seats.get_mut(&touch.seat().id()) {
             Some(seat_state) => seat_state,
             None => {
@@ -126,7 +136,7 @@ impl TouchHandler for WinitState {
         let position = touch_point.location.to_physical(scale_factor);
         let finger_id = FingerId::from_raw(id as usize);
 
-        self.events_sink.push_window_event(
+        self.events_sink.push_window_event_at(
             WindowEvent::PointerButton {
                 device_id: None,
                 primary,
@@ -136,8 +146,9 @@ impl TouchHandler for WinitState {
                 is_macos_activation_click: false,
             },
             window_id,
+            timestamp,
         );
-        self.events_sink.push_window_event(
+        self.events_sink.push_window_event_at(
             WindowEvent::PointerLeft {
                 device_id: None,
                 primary,
@@ -145,6 +156,7 @@ impl TouchHandler for WinitState {
                 kind: PointerKind::Touch(finger_id),
             },
             window_id,
+            timestamp,
         );
     }
 
@@ -153,10 +165,14 @@ impl TouchHandler for WinitState {
         _: &Connection,
         _: &QueueHandle<Self>,
         touch: &WlTouch,
-        _: u32,
+        time: u32,
         id: i32,
         position: (f64, f64),
     ) {
+        let timestamp = WinitState::resolve_compositor_time_ms(
+            &self.compositor_time_ms_anchor,
+            time,
+        );
         let seat_state = match self.seats.get_mut(&touch.seat().id()) {
             Some(seat_state) => seat_state,
             None => {
@@ -181,7 +197,7 @@ impl TouchHandler for WinitState {
 
         touch_point.location = LogicalPosition::<f64>::from(position);
 
-        self.events_sink.push_window_event(
+        self.events_sink.push_window_event_at(
             WindowEvent::PointerMoved {
                 device_id: None,
                 primary,
@@ -192,6 +208,7 @@ impl TouchHandler for WinitState {
                 },
             },
             window_id,
+            timestamp,
         );
     }
 

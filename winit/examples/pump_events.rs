@@ -16,6 +16,7 @@ fn main() -> std::process::ExitCode {
 
     use softbuffer::{Context, Surface};
     use tracing::info;
+    use winit::Instant;
     use winit::application::ApplicationHandler;
     use winit::event::WindowEvent;
     use winit::event_loop::pump_events::{EventLoopExtPumpEvents, PumpStatus};
@@ -45,6 +46,7 @@ fn main() -> std::process::ExitCode {
             &mut self,
             event_loop: &dyn ActiveEventLoop,
             _window_id: WindowId,
+            _timestamp: Instant,
             event: WindowEvent,
         ) {
             info!("{event:?}");

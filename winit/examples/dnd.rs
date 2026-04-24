@@ -5,6 +5,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, RgbImage};
 use softbuffer::{Context, Surface};
 use tracing::{error, info, warn};
+use winit::Instant;
 use winit::application::ApplicationHandler;
 use winit::data_transfer::{DataTransferId, DataTransferSendBuilder, TypeHint};
 use winit::event::{ButtonSource, MouseButton, WindowEvent};
@@ -83,6 +84,7 @@ impl ApplicationHandler for Application {
         &mut self,
         event_loop: &dyn ActiveEventLoop,
         window_id: WindowId,
+        _timestamp: Instant,
         event: WindowEvent,
     ) {
         match event {

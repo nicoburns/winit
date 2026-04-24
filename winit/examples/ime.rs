@@ -11,6 +11,7 @@ use std::error::Error;
 use dpi::{LogicalPosition, PhysicalSize};
 use softbuffer::{Context, Surface};
 use tracing::{error, info};
+use winit::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{Ime, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, OwnedDisplayHandle};
@@ -96,7 +97,13 @@ impl ApplicationHandler for App {
         self.window().request_ime_update(enable_ime).unwrap();
     }
 
-    fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        _: WindowId,
+        _timestamp: Instant,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => {
                 info!("Close was requested; stopping");

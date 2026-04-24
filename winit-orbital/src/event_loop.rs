@@ -424,13 +424,14 @@ impl EventLoop {
                     is_synthetic: false,
                 };
 
-                app.window_event(window_target, window_id, event);
+                app.window_event(window_target, window_id, Instant::now(), event);
 
                 // If the state of the modifiers has changed, send the event.
                 if modifiers_before != event_state.keyboard {
                     app.window_event(
                         window_target,
                         window_id,
+                        Instant::now(),
                         event::WindowEvent::ModifiersChanged(event_state.modifiers()),
                     );
                 }
@@ -440,7 +441,7 @@ impl EventLoop {
             },
             EventOption::Mouse(MouseEvent { x, y }) => {
                 event_state.mouse_pos = (x, y);
-                app.window_event(window_target, window_id, event::WindowEvent::PointerMoved {
+                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::PointerMoved {
                     device_id: None,
                     primary: true,
                     position: event_state.mouse_pos.into(),
@@ -448,13 +449,13 @@ impl EventLoop {
                 });
             },
             EventOption::MouseRelative(MouseRelativeEvent { dx, dy }) => {
-                app.device_event(window_target, None, event::DeviceEvent::PointerMotion {
+                app.device_event(window_target, None, Instant::now(), event::DeviceEvent::PointerMotion {
                     delta: (dx as f64, dy as f64),
                 });
             },
             EventOption::Button(ButtonEvent { left, middle, right }) => {
                 while let Some((button, state)) = event_state.mouse(left, middle, right) {
-                    app.window_event(window_target, window_id, event::WindowEvent::PointerButton {
+                    app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::PointerButton {
                         device_id: None,
                         primary: true,
                         state,
@@ -465,7 +466,7 @@ impl EventLoop {
                 }
             },
             EventOption::Scroll(ScrollEvent { x, y }) => {
-                app.window_event(window_target, window_id, event::WindowEvent::MouseWheel {
+                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::MouseWheel {
                     device_id: None,
                     delta: event::MouseScrollDelta::LineDelta(x as f32, y as f32),
                     phase: event::TouchPhase::Moved,
@@ -473,15 +474,16 @@ impl EventLoop {
                 });
             },
             EventOption::Quit(QuitEvent {}) => {
-                app.window_event(window_target, window_id, event::WindowEvent::CloseRequested);
+                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::CloseRequested);
             },
             EventOption::Focus(FocusEvent { focused }) => {
-                app.window_event(window_target, window_id, event::WindowEvent::Focused(focused));
+                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::Focused(focused));
             },
             EventOption::Move(MoveEvent { x, y }) => {
                 app.window_event(
                     window_target,
                     window_id,
+                    Instant::now(),
                     event::WindowEvent::Moved((x, y).into()),
                 );
             },
@@ -489,6 +491,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
+                    Instant::now(),
                     event::WindowEvent::SurfaceResized((width, height).into()),
                 );
 
@@ -513,7 +516,7 @@ impl EventLoop {
                     }
                 };
 
-                app.window_event(window_target, window_id, event);
+                app.window_event(window_target, window_id, Instant::now(), event);
             },
             other => {
                 tracing::warn!("unhandled event: {:?}", other);
@@ -579,11 +582,11 @@ impl EventLoop {
 
                 // Send resize event on create to indicate first size.
                 let event = event::WindowEvent::SurfaceResized((properties.w, properties.h).into());
-                app.window_event(&self.window_target, window_id, event);
+                app.window_event(&self.window_target, window_id, Instant::now(), event);
 
                 // Send moved event on create to indicate first position.
                 let event = event::WindowEvent::Moved((properties.x, properties.y).into());
-                app.window_event(&self.window_target, window_id, event);
+                app.window_event(&self.window_target, window_id, Instant::now(), event);
             }
 
             // Handle window destroys.
@@ -591,7 +594,7 @@ impl EventLoop {
                 let mut destroys = self.window_target.destroys.lock().unwrap();
                 destroys.pop_front()
             } {
-                app.window_event(&self.window_target, destroy_id, event::WindowEvent::Destroyed);
+                app.window_event(&self.window_target, destroy_id, Instant::now(), event::WindowEvent::Destroyed);
                 self.windows
                     .retain(|(window, _event_state)| WindowId::from_raw(window.fd()) != destroy_id);
             }
@@ -659,6 +662,7 @@ impl EventLoop {
                 app.window_event(
                     &self.window_target,
                     window_id,
+                    Instant::now(),
                     event::WindowEvent::RedrawRequested,
                 );
             }

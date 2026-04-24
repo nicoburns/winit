@@ -186,8 +186,9 @@ impl RootActiveEventLoop for ActiveEventLoop {
         let data: Arc<dyn TypedData> =
             Arc::new(pb.with_type(PasteboardTypeSpec::PasteboardType(type_)));
 
+        let time = self.app_state.current_event_time();
         self.app_state.maybe_queue_with_handler(move |app, event_loop| {
-            app.window_event(event_loop, window_id, WindowEvent::DataTransferReceived {
+            app.window_event(event_loop, window_id, time, WindowEvent::DataTransferReceived {
                 id,
                 serial,
                 value: data,

@@ -4,6 +4,7 @@ use std::error::Error;
 
 use softbuffer::{Context, Surface};
 use tracing::info;
+use winit::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, OwnedDisplayHandle};
@@ -36,7 +37,13 @@ impl ApplicationHandler for App {
         self.surface = Some(surface);
     }
 
-    fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, _: WindowId, event: WindowEvent) {
+    fn window_event(
+        &mut self,
+        event_loop: &dyn ActiveEventLoop,
+        _: WindowId,
+        _timestamp: Instant,
+        event: WindowEvent,
+    ) {
         info!("{event:?}");
         match event {
             WindowEvent::CloseRequested => {
