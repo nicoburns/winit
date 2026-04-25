@@ -264,8 +264,7 @@ impl WinitState {
         time_ms: u32,
     ) -> Instant {
         let mut anchor = anchor.lock().unwrap();
-        let (anchor_ms, anchor_instant) =
-            anchor.get_or_insert_with(|| (time_ms, Instant::now()));
+        let (anchor_ms, anchor_instant) = anchor.get_or_insert_with(|| (time_ms, Instant::now()));
 
         let delta = time_ms.wrapping_sub(*anchor_ms);
         if delta < u32::MAX / 2 {
@@ -286,8 +285,7 @@ impl WinitState {
         time_us: u64,
     ) -> Instant {
         let mut anchor = anchor.lock().unwrap();
-        let (anchor_us, anchor_instant) =
-            anchor.get_or_insert_with(|| (time_us, Instant::now()));
+        let (anchor_us, anchor_instant) = anchor.get_or_insert_with(|| (time_us, Instant::now()));
 
         if time_us >= *anchor_us {
             *anchor_instant += Duration::from_micros(time_us - *anchor_us);

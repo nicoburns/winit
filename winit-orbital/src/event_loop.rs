@@ -441,43 +441,71 @@ impl EventLoop {
             },
             EventOption::Mouse(MouseEvent { x, y }) => {
                 event_state.mouse_pos = (x, y);
-                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::PointerMoved {
-                    device_id: None,
-                    primary: true,
-                    position: event_state.mouse_pos.into(),
-                    source: event::PointerSource::Mouse,
-                });
+                app.window_event(
+                    window_target,
+                    window_id,
+                    Instant::now(),
+                    event::WindowEvent::PointerMoved {
+                        device_id: None,
+                        primary: true,
+                        position: event_state.mouse_pos.into(),
+                        source: event::PointerSource::Mouse,
+                    },
+                );
             },
             EventOption::MouseRelative(MouseRelativeEvent { dx, dy }) => {
-                app.device_event(window_target, None, Instant::now(), event::DeviceEvent::PointerMotion {
-                    delta: (dx as f64, dy as f64),
-                });
+                app.device_event(
+                    window_target,
+                    None,
+                    Instant::now(),
+                    event::DeviceEvent::PointerMotion { delta: (dx as f64, dy as f64) },
+                );
             },
             EventOption::Button(ButtonEvent { left, middle, right }) => {
                 while let Some((button, state)) = event_state.mouse(left, middle, right) {
-                    app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::PointerButton {
-                        device_id: None,
-                        primary: true,
-                        state,
-                        position: event_state.mouse_pos.into(),
-                        button: button.into(),
-                        is_macos_activation_click: false,
-                    });
+                    app.window_event(
+                        window_target,
+                        window_id,
+                        Instant::now(),
+                        event::WindowEvent::PointerButton {
+                            device_id: None,
+                            primary: true,
+                            state,
+                            position: event_state.mouse_pos.into(),
+                            button: button.into(),
+                            is_macos_activation_click: false,
+                        },
+                    );
                 }
             },
             EventOption::Scroll(ScrollEvent { x, y }) => {
-                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::MouseWheel {
-                    device_id: None,
-                    delta: event::MouseScrollDelta::LineDelta(x as f32, y as f32),
-                    phase: event::TouchPhase::Moved,
-                    source: event::ScrollSource::Unknown,
-                });
+                app.window_event(
+                    window_target,
+                    window_id,
+                    Instant::now(),
+                    event::WindowEvent::MouseWheel {
+                        device_id: None,
+                        delta: event::MouseScrollDelta::LineDelta(x as f32, y as f32),
+                        phase: event::TouchPhase::Moved,
+                        source: event::ScrollSource::Unknown,
+                    },
+                );
             },
             EventOption::Quit(QuitEvent {}) => {
-                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::CloseRequested);
+                app.window_event(
+                    window_target,
+                    window_id,
+                    Instant::now(),
+                    event::WindowEvent::CloseRequested,
+                );
             },
             EventOption::Focus(FocusEvent { focused }) => {
-                app.window_event(window_target, window_id, Instant::now(), event::WindowEvent::Focused(focused));
+                app.window_event(
+                    window_target,
+                    window_id,
+                    Instant::now(),
+                    event::WindowEvent::Focused(focused),
+                );
             },
             EventOption::Move(MoveEvent { x, y }) => {
                 app.window_event(
@@ -594,7 +622,12 @@ impl EventLoop {
                 let mut destroys = self.window_target.destroys.lock().unwrap();
                 destroys.pop_front()
             } {
-                app.window_event(&self.window_target, destroy_id, Instant::now(), event::WindowEvent::Destroyed);
+                app.window_event(
+                    &self.window_target,
+                    destroy_id,
+                    Instant::now(),
+                    event::WindowEvent::Destroyed,
+                );
                 self.windows
                     .retain(|(window, _event_state)| WindowId::from_raw(window.fd()) != destroy_id);
             }

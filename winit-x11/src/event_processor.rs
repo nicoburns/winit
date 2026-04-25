@@ -633,9 +633,7 @@ impl EventProcessor {
             let Some(state) = self.target.data_transfer_state.borrow_mut().reset_state() else {
                 return;
             };
-            self.emit_window_event(app, window_id, WindowEvent::DragLeft {
-                id: state.transfer_id,
-            });
+            self.emit_window_event(app, window_id, WindowEvent::DragLeft { id: state.transfer_id });
         }
     }
 

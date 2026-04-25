@@ -4,7 +4,7 @@ use std::error::Error;
 #[cfg(x11_platform)]
 fn main() -> Result<(), Box<dyn Error>> {
     use softbuffer::{Context, Surface};
-use winit::Instant;
+    use winit::Instant;
     use winit::application::ApplicationHandler;
     use winit::event::WindowEvent;
     use winit::event_loop::{ActiveEventLoop, EventLoop, OwnedDisplayHandle};

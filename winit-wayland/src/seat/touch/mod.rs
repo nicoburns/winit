@@ -25,10 +25,8 @@ impl TouchHandler for WinitState {
         id: i32,
         position: (f64, f64),
     ) {
-        let timestamp = WinitState::resolve_compositor_time_ms(
-            &self.compositor_time_ms_anchor,
-            time,
-        );
+        let timestamp =
+            WinitState::resolve_compositor_time_ms(&self.compositor_time_ms_anchor, time);
         let window_id = crate::make_wid(&surface);
         let scale_factor = match self.windows.get_mut().get(&window_id) {
             Some(window) => {
@@ -93,10 +91,8 @@ impl TouchHandler for WinitState {
         time: u32,
         id: i32,
     ) {
-        let timestamp = WinitState::resolve_compositor_time_ms(
-            &self.compositor_time_ms_anchor,
-            time,
-        );
+        let timestamp =
+            WinitState::resolve_compositor_time_ms(&self.compositor_time_ms_anchor, time);
         let seat_state = match self.seats.get_mut(&touch.seat().id()) {
             Some(seat_state) => seat_state,
             None => {
@@ -169,10 +165,8 @@ impl TouchHandler for WinitState {
         id: i32,
         position: (f64, f64),
     ) {
-        let timestamp = WinitState::resolve_compositor_time_ms(
-            &self.compositor_time_ms_anchor,
-            time,
-        );
+        let timestamp =
+            WinitState::resolve_compositor_time_ms(&self.compositor_time_ms_anchor, time);
         let seat_state = match self.seats.get_mut(&touch.seat().id()) {
             Some(seat_state) => seat_state,
             None => {
