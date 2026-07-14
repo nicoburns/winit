@@ -78,6 +78,7 @@ mod menu;
 mod monitor;
 mod notification_center;
 mod observer;
+mod traffic_light;
 mod view;
 mod window;
 mod window_delegate;
@@ -341,7 +342,7 @@ pub enum ActivationPolicy {
 /// - `with_titlebar_buttons_hidden`
 /// - `with_fullsize_content_view`
 ///
-/// [`WindowAttributes::with_decorations`]: crate::window::WindowAttributes::with_decorations
+/// [`WindowAttributes::with_decorations`]: winit_core::window::WindowAttributes::with_decorations
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowAttributesMacOS {
     pub(crate) movable_by_window_background: bool,
@@ -395,6 +396,14 @@ impl WindowAttributesMacOS {
     ///
     /// This applies an offset from the default position; it does not change the native
     /// spacing between the buttons. No effect if titlebar buttons are hidden.
+    ///
+    /// The buttons stay interactive (hover and clicks) wherever they are placed,
+    /// including outside the titlebar. Setting this alongside a hidden titlebar
+    /// (via [`with_titlebar_hidden`] or by disabling decorations) keeps the buttons
+    /// available: the window is kept titled but its titlebar chrome is stripped
+    /// (transparent, no title, full-size content) so it still looks borderless.
+    ///
+    /// [`with_titlebar_hidden`]: Self::with_titlebar_hidden
     ///
     /// ```no_run
     /// # use winit::dpi::LogicalSize;

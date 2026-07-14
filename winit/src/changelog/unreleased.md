@@ -52,5 +52,8 @@ changelog entry.
 
 ### Fixed
 
+- On macOS, fix inset traffic-light buttons not updating their hover highlight
+  and not being interactive when moved outside of the titlebar, and make them
+  available even when the titlebar is hidden.
 - On X11, fix `set_hittest` not working on some window managers.
 - On Redox, handle `EINTR` when reading from `event_socket` instead of panicking.

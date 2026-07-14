@@ -20,7 +20,7 @@ use objc2_app_kit::{
     NSAppKitVersionNumber, NSAppKitVersionNumber10_12, NSAppearance, NSAppearanceCustomization,
     NSAppearanceNameAqua, NSApplication, NSApplicationPresentationOptions, NSBackingStoreType,
     NSColor, NSDraggingDestination, NSDraggingInfo, NSRequestUserAttentionType, NSScreen,
-    NSToolbar, NSView, NSViewFrameDidChangeNotification, NSWindow, NSWindowButton,
+    NSToolbar, NSTrackingArea, NSView, NSViewFrameDidChangeNotification, NSWindow, NSWindowButton,
     NSWindowDelegate, NSWindowLevel, NSWindowOcclusionState, NSWindowOrderingMode,
     NSWindowSharingType, NSWindowStyleMask, NSWindowTabbingMode, NSWindowTitleVisibility,
     NSWindowToolbarStyle,
@@ -57,21 +57,11 @@ use super::cursor::{CustomCursor, cursor_from_icon};
 use super::ffi;
 use super::monitor::{self, MonitorHandle, flip_window_screen_coordinates, get_display_id};
 use super::observer::RunLoop;
+use super::traffic_light::{self, TrafficLightBase, TrafficLightOverlay};
 use super::util::cgerr;
 use super::view::WinitView;
 use super::window::{WinitPanel, WinitWindow, window_id};
 use crate::{OptionAsAlt, WindowAttributesMacOS, WindowExtMacOS};
-
-// Cached geometry for the native traffic-light buttons derived from
-// NSWindow::standardWindowButton(...) frames (AppKit does not expose a
-// dedicated struct for this).
-// `spacing` is the horizontal delta between adjacent buttons.
-#[derive(Clone, Copy, Debug)]
-struct TrafficLightBase {
-    x: f64,
-    y: f64,
-    spacing: f64,
-}
 
 #[derive(Debug)]
 pub(crate) struct State {
@@ -91,7 +81,12 @@ pub(crate) struct State {
     /// The current resize increments for the window content.
     surface_resize_increments: Cell<NSSize>,
     traffic_light_inset: Cell<Option<LogicalSize<f64>>>,
+    /// Cached native default geometry of the traffic-light buttons.
     traffic_light_base: Cell<Option<TrafficLightBase>>,
+    /// Overlay that forwards clicks to inset traffic-lights outside the titlebar.
+    traffic_light_overlay: RefCell<Option<Retained<TrafficLightOverlay>>>,
+    /// Tracking area (on the frame view) that drives traffic-light hover.
+    traffic_light_tracking: RefCell<Option<Retained<NSTrackingArea>>>,
     /// Whether the window is showing decorations.
     decorations: Cell<bool>,
     resizable: Cell<bool>,
@@ -527,6 +522,20 @@ define_class!(
             }
         }
     }
+
+    // Tracking-area callbacks for the traffic-light hover region. The delegate is
+    // the tracking area's owner (see `traffic_light::apply_inset`).
+    impl WindowDelegate {
+        #[unsafe(method(mouseEntered:))]
+        fn traffic_light_mouse_entered(&self, _event: Option<&AnyObject>) {
+            traffic_light::set_hover(self.window(), true);
+        }
+
+        #[unsafe(method(mouseExited:))]
+        fn traffic_light_mouse_exited(&self, _event: Option<&AnyObject>) {
+            traffic_light::set_hover(self.window(), false);
+        }
+    }
 );
 
 impl Drop for WindowDelegate {
@@ -579,7 +588,19 @@ fn new_window(
             },
         };
 
-        let mut masks = if (!attrs.decorations && screen.is_none()) || macos_attrs.titlebar_hidden {
+        let titlebar_hidden =
+            (!attrs.decorations && screen.is_none()) || macos_attrs.titlebar_hidden;
+
+        // The native traffic-light buttons only exist on a titled window. When a
+        // traffic-light inset is requested together with a hidden titlebar, keep
+        // the window titled but strip the titlebar chrome (transparent titlebar,
+        // no title, full-size content) so it still looks borderless while the
+        // buttons remain available. This mirrors how browsers keep native window
+        // controls with a custom/hidden titlebar.
+        let emulate_hidden_titlebar =
+            titlebar_hidden && macos_attrs.traffic_light_inset.is_some();
+
+        let mut masks = if titlebar_hidden && !emulate_hidden_titlebar {
             // Resizable without a titlebar or borders
             // if decorations is set to false, ignore pl_attrs
             //
@@ -594,6 +615,10 @@ fn new_window(
                 | NSWindowStyleMask::Resizable
                 | NSWindowStyleMask::Titled
         };
+
+        if emulate_hidden_titlebar {
+            masks |= NSWindowStyleMask::FullSizeContentView;
+        }
 
         if !attrs.resizable {
             masks &= !NSWindowStyleMask::Resizable;
@@ -667,10 +692,10 @@ fn new_window(
             window.setSharingType(NSWindowSharingType::None);
         }
 
-        if macos_attrs.titlebar_transparent {
+        if macos_attrs.titlebar_transparent || emulate_hidden_titlebar {
             window.setTitlebarAppearsTransparent(true);
         }
-        if macos_attrs.title_hidden {
+        if macos_attrs.title_hidden || emulate_hidden_titlebar {
             window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         }
         if macos_attrs.titlebar_buttons_hidden {
@@ -824,6 +849,8 @@ impl WindowDelegate {
             surface_resize_increments: Cell::new(surface_resize_increments),
             traffic_light_inset: Cell::new(macos_attrs.traffic_light_inset),
             traffic_light_base: Cell::new(None),
+            traffic_light_overlay: RefCell::new(None),
+            traffic_light_tracking: RefCell::new(None),
             decorations: Cell::new(attrs.decorations),
             resizable: Cell::new(attrs.resizable),
             maximized: Cell::new(attrs.maximized),
@@ -958,65 +985,15 @@ impl WindowDelegate {
             return;
         };
 
-        // Fetch standard buttons; if any are hidden, clear cached base.
-        let window = self.window();
-        let Some(close) = window.standardWindowButton(NSWindowButton::CloseButton) else {
-            return;
-        };
-        if close.isHidden() {
-            self.ivars().traffic_light_base.set(None);
-            return;
-        }
-        let Some(miniaturize) = window.standardWindowButton(NSWindowButton::MiniaturizeButton)
-        else {
-            return;
-        };
-        if miniaturize.isHidden() {
-            self.ivars().traffic_light_base.set(None);
-            return;
-        }
-        let Some(zoom) = window.standardWindowButton(NSWindowButton::ZoomButton) else {
-            return;
-        };
-        if zoom.isHidden() {
-            self.ivars().traffic_light_base.set(None);
-            return;
-        }
-
-        // Capture the current default geometry as a candidate base.
-        let close_rect = close.frame();
-        let spacing = miniaturize.frame().origin.x - close_rect.origin.x; // Horizontal delta between buttons.
-        let current = TrafficLightBase { x: close_rect.origin.x, y: close_rect.origin.y, spacing };
-
-        // If frames no longer match cached base + inset (AppKit reset), refresh base.
-        let base = match self.ivars().traffic_light_base.get() {
-            Some(base) => {
-                let expected_x = base.x + inset.width;
-                let expected_y = base.y - inset.height;
-                let drift = (close_rect.origin.x - expected_x).abs() > 0.5
-                    || (close_rect.origin.y - expected_y).abs() > 0.5
-                    || (spacing - base.spacing).abs() > 0.5;
-                if drift {
-                    self.ivars().traffic_light_base.set(Some(current));
-                    current
-                } else {
-                    base
-                }
-            },
-            None => {
-                self.ivars().traffic_light_base.set(Some(current));
-                current
-            },
-        };
-
-        // Apply inset relative to base while preserving native spacing.
-        let target_y = base.y - inset.height;
-        for (index, button) in [close, miniaturize, zoom].into_iter().enumerate() {
-            let mut rect = button.frame();
-            rect.origin.x = base.x + inset.width + (index as f64 * base.spacing);
-            rect.origin.y = target_y;
-            button.setFrameOrigin(rect.origin);
-        }
+        traffic_light::apply_inset(
+            self.window(),
+            inset,
+            &self.ivars().traffic_light_base,
+            &self.ivars().traffic_light_overlay,
+            &self.ivars().traffic_light_tracking,
+            self,
+            MainThreadMarker::from(self),
+        );
     }
 
     fn set_style_mask(&self, mask: NSWindowStyleMask) {
@@ -1712,12 +1689,23 @@ impl WindowDelegate {
             return;
         }
 
+        // Keep the traffic-light buttons alive when an inset is configured: they
+        // only exist on a titled window, so emulate the hidden titlebar with a
+        // transparent, title-less, full-size-content titlebar instead of going
+        // borderless (see the window creation path for details).
+        let emulate_hidden_titlebar =
+            !decorations && self.ivars().traffic_light_inset.get().is_some();
+
         let new_mask = {
-            let mut new_mask = if decorations {
-                NSWindowStyleMask::Closable
+            let mut new_mask = if decorations || emulate_hidden_titlebar {
+                let mut mask = NSWindowStyleMask::Closable
                     | NSWindowStyleMask::Miniaturizable
                     | NSWindowStyleMask::Resizable
-                    | NSWindowStyleMask::Titled
+                    | NSWindowStyleMask::Titled;
+                if emulate_hidden_titlebar {
+                    mask |= NSWindowStyleMask::FullSizeContentView;
+                }
+                mask
             } else {
                 NSWindowStyleMask::Borderless | NSWindowStyleMask::Resizable
             };
@@ -1727,6 +1715,18 @@ impl WindowDelegate {
             new_mask
         };
         self.set_style_mask(new_mask);
+
+        if emulate_hidden_titlebar {
+            self.window().setTitlebarAppearsTransparent(true);
+            self.window().setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        } else if decorations {
+            self.window().setTitlebarAppearsTransparent(false);
+            self.window().setTitleVisibility(NSWindowTitleVisibility::Visible);
+        }
+
+        // Re-assert the inset: changing the style mask recreates the titlebar and
+        // resets the button positions.
+        self.apply_traffic_light_inset();
     }
 
     #[inline]
