@@ -61,7 +61,7 @@ pub(super) struct AppState {
     // as such should be careful to not add fields that, in turn, strongly reference those.
 }
 
-struct EventTimeGuard<'a> {
+pub(crate) struct EventTimeGuard<'a> {
     slot: &'a Cell<Option<Instant>>,
     previous: Option<Instant>,
 }
@@ -172,9 +172,8 @@ impl AppState {
         }
     }
 
-    pub(crate) fn with_dispatching_event_time<R>(&self, time: Instant, f: impl FnOnce() -> R) -> R {
-        let _guard = EventTimeGuard::new(&self.dispatching_event_time, time);
-        f()
+    pub(crate) fn set_dispatching_event_time(&self, time: Instant) -> EventTimeGuard<'_> {
+        EventTimeGuard::new(&self.dispatching_event_time, time)
     }
 
     /// Time of the `NSEvent` currently being dispatched by `sendEvent:`, if any; otherwise

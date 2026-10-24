@@ -31,18 +31,7 @@ extern "C-unwind" fn send_event(app: &NSApplication, sel: Sel, event: &NSEvent) 
 
     let app_state = AppState::get(mtm);
     let time = app_state.event_time(event);
-    app_state
-        .with_dispatching_event_time(time, || send_event_inner(app, sel, event, &app_state, time))
-}
-
-fn send_event_inner(
-    app: &NSApplication,
-    sel: Sel,
-    event: &NSEvent,
-    app_state: &Rc<AppState>,
-    time: Instant,
-) {
-    let mtm = MainThreadMarker::from(app);
+    let _dispatching = app_state.set_dispatching_event_time(time);
 
     // Normally, holding Cmd + any key never sends us a `keyUp` event for that key.
     // Overriding `sendEvent:` fixes that. (https://stackoverflow.com/a/15294196)
@@ -62,7 +51,7 @@ fn send_event_inner(
 
     // Events are generally scoped to the window level, so the best way
     // to get device events is to listen for them on NSApplication.
-    maybe_dispatch_device_event(app_state, event, time);
+    maybe_dispatch_device_event(&app_state, event, time);
 
     let original = ORIGINAL.get(mtm).get().expect("no existing sendEvent: handler set");
     original(app, sel, event)
