@@ -2,6 +2,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Instant;
 use std::{mem, ptr};
 
 use dispatch2::MainThreadBound;
@@ -28,6 +29,21 @@ extern "C-unwind" fn send_event(app: &NSApplication, sel: Sel, event: &NSEvent) 
     let _entered = trace_span!("sendEvent:", ?event).entered();
     let mtm = MainThreadMarker::from(app);
 
+    let app_state = AppState::get(mtm);
+    let time = app_state.event_time(event);
+    app_state
+        .with_dispatching_event_time(time, || send_event_inner(app, sel, event, &app_state, time))
+}
+
+fn send_event_inner(
+    app: &NSApplication,
+    sel: Sel,
+    event: &NSEvent,
+    app_state: &Rc<AppState>,
+    time: Instant,
+) {
+    let mtm = MainThreadMarker::from(app);
+
     // Normally, holding Cmd + any key never sends us a `keyUp` event for that key.
     // Overriding `sendEvent:` fixes that. (https://stackoverflow.com/a/15294196)
     // Fun fact: Firefox still has this bug! (https://bugzilla.mozilla.org/show_bug.cgi?id=1299553)
@@ -46,8 +62,7 @@ extern "C-unwind" fn send_event(app: &NSApplication, sel: Sel, event: &NSEvent) 
 
     // Events are generally scoped to the window level, so the best way
     // to get device events is to listen for them on NSApplication.
-    let app_state = AppState::get(mtm);
-    maybe_dispatch_device_event(&app_state, event);
+    maybe_dispatch_device_event(app_state, event, time);
 
     let original = ORIGINAL.get(mtm).get().expect("no existing sendEvent: handler set");
     original(app, sel, event)
@@ -100,8 +115,7 @@ pub(crate) fn override_send_event(global_app: &NSApplication) {
     ORIGINAL.get(mtm).set(Some(original));
 }
 
-fn maybe_dispatch_device_event(app_state: &Rc<AppState>, event: &NSEvent) {
-    let time = app_state.event_time(event);
+fn maybe_dispatch_device_event(app_state: &Rc<AppState>, event: &NSEvent, time: Instant) {
     let event_type = event.r#type();
     #[allow(non_upper_case_globals)]
     match event_type {

@@ -10,7 +10,7 @@ use objc2::MainThreadMarker;
 use objc2::rc::{Retained, Weak};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSEvent, NSRunningApplication};
 use objc2_foundation::NSNotification;
-use tracing::warn;
+use tracing::trace;
 use winit_common::core_foundation::{EventLoopProxy, MainRunLoop};
 use winit_common::event_handler::EventHandler;
 use winit_core::application::ApplicationHandler;
@@ -55,8 +55,27 @@ pub(super) struct AppState {
     /// `NSEvent.timestamp` into [`Instant`].
     startup_instant: Instant,
     startup_timestamp: f64,
+    /// Time of the event currently being dispatched by `sendEvent:`, if any.
+    dispatching_event_time: Cell<Option<Instant>>,
     // NOTE: This is strongly referenced by our `NSWindowDelegate` and our `NSView` subclass, and
     // as such should be careful to not add fields that, in turn, strongly reference those.
+}
+
+struct EventTimeGuard<'a> {
+    slot: &'a Cell<Option<Instant>>,
+    previous: Option<Instant>,
+}
+
+impl<'a> EventTimeGuard<'a> {
+    fn new(slot: &'a Cell<Option<Instant>>, time: Instant) -> Self {
+        Self { slot, previous: slot.replace(Some(time)) }
+    }
+}
+
+impl Drop for EventTimeGuard<'_> {
+    fn drop(&mut self) {
+        self.slot.set(self.previous);
+    }
 }
 
 // SAFETY: Creating `MainThreadBound` in a `const` context, where there is no concept of the
@@ -105,6 +124,7 @@ impl AppState {
             pending_redraw: RefCell::new(vec![]),
             startup_instant,
             startup_timestamp,
+            dispatching_event_time: Cell::new(None),
         });
 
         GLOBAL.get(mtm).set(this.clone()).ok().and(Some(this))
@@ -137,7 +157,7 @@ impl AppState {
     pub(crate) fn event_time(&self, event: &NSEvent) -> Instant {
         let ts = event.timestamp();
         if ts == 0.0 {
-            warn!("NSEvent has zero timestamp; falling back to Instant::now()");
+            trace!("NSEvent has zero timestamp; falling back to Instant::now()");
             return Instant::now();
         }
         let secs_since_startup = ts - self.startup_timestamp;
@@ -152,15 +172,15 @@ impl AppState {
         }
     }
 
-    /// Look up the time of the currently-dispatching `NSEvent`, if any; otherwise
+    pub(crate) fn with_dispatching_event_time<R>(&self, time: Instant, f: impl FnOnce() -> R) -> R {
+        let _guard = EventTimeGuard::new(&self.dispatching_event_time, time);
+        f()
+    }
+
+    /// Time of the `NSEvent` currently being dispatched by `sendEvent:`, if any; otherwise
     /// [`Instant::now()`].
     pub(crate) fn current_event_time(&self) -> Instant {
-        let app = NSApplication::sharedApplication(self.mtm);
-        if let Some(nsevent) = app.currentEvent() {
-            self.event_time(&nsevent)
-        } else {
-            Instant::now()
-        }
+        self.dispatching_event_time.get().unwrap_or_else(Instant::now)
     }
 
     // NOTE: This notification will, globally, only be emitted once,
@@ -472,4 +492,40 @@ impl AppState {
 /// `Option::min`)
 fn min_timeout(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
     a.map_or(b, |a_timeout| b.map_or(Some(a_timeout), |b_timeout| Some(a_timeout.min(b_timeout))))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    #[test]
+    fn dispatch_timestamp_is_scoped_and_nested() {
+        let slot = Cell::new(None);
+        let outer = Instant::now();
+        let inner = outer + Duration::from_millis(1);
+        {
+            let _outer = EventTimeGuard::new(&slot, outer);
+            assert_eq!(slot.get(), Some(outer));
+            {
+                let _inner = EventTimeGuard::new(&slot, inner);
+                assert_eq!(slot.get(), Some(inner));
+            }
+            assert_eq!(slot.get(), Some(outer));
+        }
+        assert_eq!(slot.get(), None);
+    }
+
+    #[test]
+    fn dispatch_timestamp_is_restored_after_unwind() {
+        let previous = Instant::now();
+        let slot = Cell::new(Some(previous));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = EventTimeGuard::new(&slot, previous + Duration::from_millis(1));
+            panic!("unwind during event dispatch");
+        }));
+        assert!(result.is_err());
+        assert_eq!(slot.get(), Some(previous));
+    }
 }
