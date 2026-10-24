@@ -214,7 +214,7 @@ pub trait ApplicationHandler {
     ///   using `performance.now()` to [`Instant`]. Other events use [`Instant::now()`].
     /// - **iOS:** `UITouch.timestamp` (including coalesced moves), converted using
     ///   `CACurrentMediaTime()` to [`Instant`]. Other events are timestamped when created.
-    /// - **Orbital:** [`Instant::now()`].
+    /// - **Orbital:** [`Instant::now()`] sampled immediately after reading a socket event batch.
     fn window_event(
         &mut self,
         event_loop: &dyn ActiveEventLoop,

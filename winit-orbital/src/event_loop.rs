@@ -358,6 +358,7 @@ impl EventLoop {
     fn process_event<A: ApplicationHandler>(
         window_id: WindowId,
         event_option: EventOption,
+        timestamp: Instant,
         event_state: &mut EventState,
         window_target: &ActiveEventLoop,
         app: &mut A,
@@ -424,14 +425,14 @@ impl EventLoop {
                     is_synthetic: false,
                 };
 
-                app.window_event(window_target, window_id, Instant::now(), event);
+                app.window_event(window_target, window_id, timestamp, event);
 
                 // If the state of the modifiers has changed, send the event.
                 if modifiers_before != event_state.keyboard {
                     app.window_event(
                         window_target,
                         window_id,
-                        Instant::now(),
+                        timestamp,
                         event::WindowEvent::ModifiersChanged(event_state.modifiers()),
                     );
                 }
@@ -444,7 +445,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
-                    Instant::now(),
+                    timestamp,
                     event::WindowEvent::PointerMoved {
                         device_id: None,
                         primary: true,
@@ -457,7 +458,7 @@ impl EventLoop {
                 app.device_event(
                     window_target,
                     None,
-                    Instant::now(),
+                    timestamp,
                     event::DeviceEvent::PointerMotion { delta: (dx as f64, dy as f64) },
                 );
             },
@@ -466,7 +467,7 @@ impl EventLoop {
                     app.window_event(
                         window_target,
                         window_id,
-                        Instant::now(),
+                        timestamp,
                         event::WindowEvent::PointerButton {
                             device_id: None,
                             primary: true,
@@ -482,7 +483,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
-                    Instant::now(),
+                    timestamp,
                     event::WindowEvent::MouseWheel {
                         device_id: None,
                         delta: event::MouseScrollDelta::LineDelta(x as f32, y as f32),
@@ -495,7 +496,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
-                    Instant::now(),
+                    timestamp,
                     event::WindowEvent::CloseRequested,
                 );
             },
@@ -503,7 +504,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
-                    Instant::now(),
+                    timestamp,
                     event::WindowEvent::Focused(focused),
                 );
             },
@@ -511,7 +512,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
-                    Instant::now(),
+                    timestamp,
                     event::WindowEvent::Moved((x, y).into()),
                 );
             },
@@ -519,7 +520,7 @@ impl EventLoop {
                 app.window_event(
                     window_target,
                     window_id,
-                    Instant::now(),
+                    timestamp,
                     event::WindowEvent::SurfaceResized((width, height).into()),
                 );
 
@@ -544,7 +545,7 @@ impl EventLoop {
                     }
                 };
 
-                app.window_event(window_target, window_id, Instant::now(), event);
+                app.window_event(window_target, window_id, timestamp, event);
             },
             other => {
                 tracing::warn!("unhandled event: {:?}", other);
@@ -641,6 +642,7 @@ impl EventLoop {
                 let mut event_buf = [0u8; 16 * mem::size_of::<orbclient::Event>()];
                 let count = libredox::call::read(window.fd(), &mut event_buf)
                     .expect("failed to read window events");
+                let timestamp = Instant::now();
                 // Safety: orbclient::Event is a packed struct designed to be transferred over a
                 // socket.
                 let events = unsafe {
@@ -654,6 +656,7 @@ impl EventLoop {
                     Self::process_event(
                         window_id,
                         orbital_event.to_option(),
+                        timestamp,
                         event_state,
                         &self.window_target,
                         app,
