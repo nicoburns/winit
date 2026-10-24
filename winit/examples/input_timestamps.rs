@@ -2,14 +2,17 @@
 
 use std::collections::HashMap;
 
+use softbuffer::{Context, Surface};
 use tracing::info;
 use winit::Instant;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop, OwnedDisplayHandle};
 use winit::window::{Window, WindowAttributes, WindowId};
 
+#[path = "util/fill.rs"]
+mod fill;
 #[path = "util/tracing.rs"]
 mod tracing;
 
@@ -20,18 +23,22 @@ fn main() -> Result<(), impl std::error::Error> {
 
 #[derive(Default)]
 struct InputTimestamps {
-    window: Option<Box<dyn Window>>,
+    surface: Option<Surface<OwnedDisplayHandle, Box<dyn Window>>>,
     position: Option<PhysicalPosition<f64>>,
     previous: HashMap<&'static str, Instant>,
 }
 
 impl ApplicationHandler for InputTimestamps {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        self.window = Some(
-            event_loop
-                .create_window(WindowAttributes::default().with_title("Input timestamps"))
-                .unwrap(),
-        );
+        let window = event_loop
+            .create_window(WindowAttributes::default().with_title("Input timestamps"))
+            .unwrap();
+        let context = Context::new(event_loop.owned_display_handle()).unwrap();
+        self.surface = Some(Surface::new(&context, window).unwrap());
+    }
+
+    fn destroy_surfaces(&mut self, _event_loop: &dyn ActiveEventLoop) {
+        self.surface = None;
     }
 
     fn window_event(
@@ -42,6 +49,12 @@ impl ApplicationHandler for InputTimestamps {
         event: WindowEvent,
     ) {
         let kind = match event {
+            WindowEvent::RedrawRequested => {
+                let surface = self.surface.as_mut().unwrap();
+                surface.window().pre_present_notify();
+                fill::fill(surface);
+                return;
+            },
             WindowEvent::PointerMoved { position, .. } => {
                 self.position = Some(position);
                 "PointerMoved"
