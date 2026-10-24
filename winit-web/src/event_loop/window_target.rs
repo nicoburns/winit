@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use web_sys::Element;
+use web_time::Instant;
 use winit_core::application::ApplicationHandler;
 use winit_core::cursor::{CustomCursor as CoreCustomCursor, CustomCursorSource};
 use winit_core::error::{CreateWindowError, CustomCursorError, NotSupportedError};
@@ -83,12 +84,14 @@ impl ActiveEventLoop {
                 modifiers.set(ModifiersState::empty());
                 Event::WindowEvent {
                     window_id,
+                    timestamp: Instant::now(),
                     event: WindowEvent::ModifiersChanged(ModifiersState::empty().into()),
                 }
             });
 
             runner.send_events(clear_modifiers.into_iter().chain(iter::once(Event::WindowEvent {
                 window_id,
+                timestamp: Instant::now(),
                 event: WindowEvent::Focused(false),
             })));
         });
@@ -99,6 +102,7 @@ impl ActiveEventLoop {
             if !has_focus.replace(true) {
                 runner.send_event(Event::WindowEvent {
                     window_id,
+                    timestamp: Instant::now(),
                     event: WindowEvent::Focused(true),
                 });
             }
@@ -117,18 +121,28 @@ impl ActiveEventLoop {
 
         if focused {
             canvas.has_focus.set(true);
-            self.runner
-                .send_event(Event::WindowEvent { window_id, event: WindowEvent::Focused(true) })
+            self.runner.send_event(Event::WindowEvent {
+                window_id,
+                timestamp: Instant::now(),
+                event: WindowEvent::Focused(true),
+            })
         }
 
         let runner = self.runner.clone();
         let modifiers = self.modifiers.clone();
         canvas.on_keyboard_press(
-            move |physical_key, logical_key, text, location, repeat, active_modifiers| {
+            move |timestamp,
+                  physical_key,
+                  logical_key,
+                  text,
+                  location,
+                  repeat,
+                  active_modifiers| {
                 let modifiers_changed = (modifiers.get() != active_modifiers).then(|| {
                     modifiers.set(active_modifiers);
                     Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                     }
                 });
@@ -136,6 +150,7 @@ impl ActiveEventLoop {
                 runner.send_events(
                     iter::once(Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::KeyboardInput {
                             device_id: None,
                             event: KeyEvent {
@@ -159,11 +174,18 @@ impl ActiveEventLoop {
         let runner = self.runner.clone();
         let modifiers = self.modifiers.clone();
         canvas.on_keyboard_release(
-            move |physical_key, logical_key, text, location, repeat, active_modifiers| {
+            move |timestamp,
+                  physical_key,
+                  logical_key,
+                  text,
+                  location,
+                  repeat,
+                  active_modifiers| {
                 let modifiers_changed = (modifiers.get() != active_modifiers).then(|| {
                     modifiers.set(active_modifiers);
                     Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                     }
                 });
@@ -171,6 +193,7 @@ impl ActiveEventLoop {
                 runner.send_events(
                     iter::once(Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::KeyboardInput {
                             device_id: None,
                             event: KeyEvent {
@@ -197,17 +220,19 @@ impl ActiveEventLoop {
             let has_focus = has_focus.clone();
             let modifiers = self.modifiers.clone();
 
-            move |active_modifiers, device_id, primary, position, kind| {
+            move |timestamp, active_modifiers, device_id, primary, position, kind| {
                 let focus = (has_focus.get() && modifiers.get() != active_modifiers).then(|| {
                     modifiers.set(active_modifiers);
                     Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                     }
                 });
 
                 runner.send_events(focus.into_iter().chain(iter::once(Event::WindowEvent {
                     window_id,
+                    timestamp,
                     event: WindowEvent::PointerLeft {
                         device_id,
                         primary,
@@ -223,17 +248,19 @@ impl ActiveEventLoop {
             let has_focus = has_focus.clone();
             let modifiers = self.modifiers.clone();
 
-            move |active_modifiers, device_id, primary, position, kind| {
+            move |timestamp, active_modifiers, device_id, primary, position, kind| {
                 let focus = (has_focus.get() && modifiers.get() != active_modifiers).then(|| {
                     modifiers.set(active_modifiers);
                     Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                     }
                 });
 
                 runner.send_events(focus.into_iter().chain(iter::once(Event::WindowEvent {
                     window_id,
+                    timestamp,
                     event: WindowEvent::PointerEntered { device_id, primary, position, kind },
                 })))
             }
@@ -247,13 +274,14 @@ impl ActiveEventLoop {
 
                 move |device_id, events| {
                     runner.send_events(events.flat_map(
-                        |(active_modifiers, primary, position, source)| {
+                        |(timestamp, active_modifiers, primary, position, source)| {
                             let modifiers = (has_focus.get()
                                 && modifiers.get() != active_modifiers)
                                 .then(|| {
                                     modifiers.set(active_modifiers);
                                     Event::WindowEvent {
                                         window_id,
+                                        timestamp,
                                         event: WindowEvent::ModifiersChanged(
                                             active_modifiers.into(),
                                         ),
@@ -262,6 +290,7 @@ impl ActiveEventLoop {
 
                             modifiers.into_iter().chain(iter::once(Event::WindowEvent {
                                 window_id,
+                                timestamp,
                                 event: WindowEvent::PointerMoved {
                                     device_id,
                                     primary,
@@ -278,18 +307,20 @@ impl ActiveEventLoop {
                 let has_focus = has_focus.clone();
                 let modifiers = self.modifiers.clone();
 
-                move |active_modifiers, device_id, primary, position, state, button| {
+                move |timestamp, active_modifiers, device_id, primary, position, state, button| {
                     let modifiers =
                         (has_focus.get() && modifiers.get() != active_modifiers).then(|| {
                             modifiers.set(active_modifiers);
                             Event::WindowEvent {
                                 window_id,
+                                timestamp,
                                 event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                             }
                         });
 
                     runner.send_events(modifiers.into_iter().chain([Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::PointerButton {
                             device_id,
                             primary,
@@ -307,17 +338,19 @@ impl ActiveEventLoop {
             let runner = self.runner.clone();
             let modifiers = self.modifiers.clone();
 
-            move |active_modifiers, device_id, primary, position, button| {
+            move |timestamp, active_modifiers, device_id, primary, position, button| {
                 let modifiers = (modifiers.get() != active_modifiers).then(|| {
                     modifiers.set(active_modifiers);
                     Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                     }
                 });
 
                 runner.send_events(modifiers.into_iter().chain(iter::once(Event::WindowEvent {
                     window_id,
+                    timestamp,
                     event: WindowEvent::PointerButton {
                         device_id,
                         primary,
@@ -335,18 +368,20 @@ impl ActiveEventLoop {
             let has_focus = has_focus.clone();
             let modifiers = self.modifiers.clone();
 
-            move |active_modifiers, device_id, primary, position, button| {
+            move |timestamp, active_modifiers, device_id, primary, position, button| {
                 let modifiers =
                     (has_focus.get() && modifiers.get() != active_modifiers).then(|| {
                         modifiers.set(active_modifiers);
                         Event::WindowEvent {
                             window_id,
+                            timestamp,
                             event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                         }
                     });
 
                 runner.send_events(modifiers.into_iter().chain(iter::once(Event::WindowEvent {
                     window_id,
+                    timestamp,
                     event: WindowEvent::PointerButton {
                         device_id,
                         primary,
@@ -361,12 +396,13 @@ impl ActiveEventLoop {
 
         let runner = self.runner.clone();
         let modifiers = self.modifiers.clone();
-        canvas.on_mouse_wheel(move |delta, active_modifiers| {
+        canvas.on_mouse_wheel(move |timestamp, delta, active_modifiers| {
             let modifiers_changed =
                 (has_focus.get() && modifiers.get() != active_modifiers).then(|| {
                     modifiers.set(active_modifiers);
                     Event::WindowEvent {
                         window_id,
+                        timestamp,
                         event: WindowEvent::ModifiersChanged(active_modifiers.into()),
                     }
                 });
@@ -374,6 +410,7 @@ impl ActiveEventLoop {
             runner.send_events(modifiers_changed.into_iter().chain(iter::once(
                 Event::WindowEvent {
                     window_id,
+                    timestamp,
                     event: WindowEvent::MouseWheel {
                         device_id: None,
                         delta,
@@ -389,6 +426,7 @@ impl ActiveEventLoop {
             let theme = if is_dark_mode { Theme::Dark } else { Theme::Light };
             runner.send_event(Event::WindowEvent {
                 window_id,
+                timestamp: Instant::now(),
                 event: WindowEvent::ThemeChanged(theme),
             });
         });
@@ -416,6 +454,7 @@ impl ActiveEventLoop {
                         canvas.set_old_size(new_size);
                         runner.send_event(Event::WindowEvent {
                             window_id,
+                            timestamp: Instant::now(),
                             event: WindowEvent::SurfaceResized(new_size),
                         });
                         canvas.request_animation_frame();
@@ -432,6 +471,7 @@ impl ActiveEventLoop {
             {
                 runner.send_event(Event::WindowEvent {
                     window_id,
+                    timestamp: Instant::now(),
                     event: WindowEvent::Occluded(!is_intersecting),
                 });
             }

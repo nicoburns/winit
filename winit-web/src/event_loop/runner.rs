@@ -136,8 +136,8 @@ impl Runner {
     fn handle_single_event(&mut self, runner: &Shared, event: Event) {
         match event {
             Event::NewEvents(cause) => self.app.new_events(&self.event_loop, cause),
-            Event::WindowEvent { window_id, event } => {
-                self.app.window_event(&self.event_loop, window_id, Instant::now(), event)
+            Event::WindowEvent { window_id, timestamp, event } => {
+                self.app.window_event(&self.event_loop, window_id, timestamp, event)
             },
             Event::ScaleChange { canvas, size, scale } => {
                 if let Some(canvas) = canvas.upgrade() {
@@ -156,8 +156,8 @@ impl Runner {
                     )
                 }
             },
-            Event::DeviceEvent { device_id, event } => {
-                self.app.device_event(&self.event_loop, device_id, Instant::now(), event)
+            Event::DeviceEvent { device_id, timestamp, event } => {
+                self.app.device_event(&self.event_loop, device_id, timestamp, event)
             },
             Event::UserWakeUp => self.app.proxy_wake_up(&self.event_loop),
             Event::Suspended => self.app.suspended(&self.event_loop),
@@ -331,6 +331,7 @@ impl Shared {
                     };
 
                     runner.send_event(Event::DeviceEvent {
+                        timestamp: backend::event::event_time(&event),
                         device_id,
                         event: DeviceEvent::Button { button: button.into(), state },
                     });
@@ -345,6 +346,7 @@ impl Shared {
                         let delta = delta.delta(&event).to_physical(backend::scale_factor(&window));
 
                         Event::DeviceEvent {
+                            timestamp: backend::event::event_time(&event),
                             device_id,
                             event: DeviceEvent::PointerMotion { delta: (delta.x, delta.y) },
                         }
@@ -364,6 +366,7 @@ impl Shared {
 
                 if let Some(delta) = backend::event::mouse_scroll_delta(&window, &event) {
                     runner.send_event(Event::DeviceEvent {
+                        timestamp: backend::event::event_time(&event),
                         device_id: None,
                         event: DeviceEvent::MouseWheel { delta },
                     });
@@ -381,6 +384,7 @@ impl Shared {
 
                 let button = backend::event::raw_button(&event).expect("no pointer button pressed");
                 runner.send_event(Event::DeviceEvent {
+                    timestamp: backend::event::event_time(&event),
                     device_id: event::mkdid(event.pointer_id()),
                     event: DeviceEvent::Button {
                         button: button.into(),
@@ -400,6 +404,7 @@ impl Shared {
 
                 let button = backend::event::raw_button(&event).expect("no pointer button pressed");
                 runner.send_event(Event::DeviceEvent {
+                    timestamp: backend::event::event_time(&event),
                     device_id: event::mkdid(event.pointer_id()),
                     event: DeviceEvent::Button {
                         button: button.into(),
@@ -418,6 +423,7 @@ impl Shared {
                 }
 
                 runner.send_event(Event::DeviceEvent {
+                    timestamp: backend::event::event_time(&event),
                     device_id: None,
                     event: DeviceEvent::Key(RawKeyEvent {
                         physical_key: backend::event::key_code(&event),
@@ -436,6 +442,7 @@ impl Shared {
                 }
 
                 runner.send_event(Event::DeviceEvent {
+                    timestamp: backend::event::event_time(&event),
                     device_id: None,
                     event: DeviceEvent::Key(RawKeyEvent {
                         physical_key: backend::event::key_code(&event),
@@ -463,6 +470,7 @@ impl Shared {
                             {
                                 runner.send_event(Event::WindowEvent {
                                     window_id: *id,
+                                    timestamp: Instant::now(),
                                     event: WindowEvent::Occluded(!is_visible),
                                 });
                             }
@@ -607,6 +615,7 @@ impl Shared {
             self.0.all_canvases.borrow_mut().retain(|&(item_id, ..)| item_id != id);
             self.handle_event(Event::WindowEvent {
                 window_id: id,
+                timestamp: Instant::now(),
                 event: winit_core::event::WindowEvent::Destroyed,
             });
             self.0.redraw_pending.borrow_mut().remove(&id);
@@ -628,6 +637,7 @@ impl Shared {
         for window_id in redraw_events {
             self.handle_event(Event::WindowEvent {
                 window_id,
+                timestamp: Instant::now(),
                 event: WindowEvent::RedrawRequested,
             });
         }
@@ -871,9 +881,9 @@ impl WeakShared {
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum Event {
     NewEvents(StartCause),
-    WindowEvent { window_id: WindowId, event: WindowEvent },
+    WindowEvent { window_id: WindowId, timestamp: Instant, event: WindowEvent },
     ScaleChange { canvas: Weak<backend::Canvas>, size: PhysicalSize<u32>, scale: f64 },
-    DeviceEvent { device_id: Option<DeviceId>, event: DeviceEvent },
+    DeviceEvent { device_id: Option<DeviceId>, timestamp: Instant, event: DeviceEvent },
     Suspended,
     CreateSurfaces,
     Resumed,

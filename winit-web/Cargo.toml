@@ -68,6 +68,7 @@ web_sys = { workspace = true, features = [
     "OrientationType",
     "PageTransitionEvent",
     "Permissions",
+    "Performance",
     "PermissionState",
     "PermissionStatus",
     "PointerEvent",
@@ -93,3 +94,6 @@ concurrent-queue.workspace = true
 [package.metadata.docs.rs]
 all-features = true
 targets = ["wasm32-unknown-unknown"]
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true

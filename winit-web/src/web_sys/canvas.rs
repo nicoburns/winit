@@ -11,6 +11,7 @@ use web_sys::{
     CssStyleDeclaration, Document, Event, FocusEvent, HtmlCanvasElement, KeyboardEvent, Navigator,
     PointerEvent, WheelEvent,
 };
+use web_time::Instant;
 use winit_core::error::CreateWindowError;
 use winit_core::event::{
     ButtonSource, DeviceId, ElementState, MouseScrollDelta, PointerKind, PointerSource,
@@ -287,7 +288,8 @@ impl Canvas {
 
     pub fn on_keyboard_release<F>(&self, mut handler: F)
     where
-        F: 'static + FnMut(PhysicalKey, Key, Option<SmolStr>, KeyLocation, bool, ModifiersState),
+        F: 'static
+            + FnMut(Instant, PhysicalKey, Key, Option<SmolStr>, KeyLocation, bool, ModifiersState),
     {
         let prevent_default = Rc::clone(&self.prevent_default);
         self.handlers.borrow_mut().on_keyboard_release =
@@ -298,6 +300,7 @@ impl Canvas {
                 let key = event::key(&event);
                 let modifiers = event::keyboard_modifiers(&event);
                 handler(
+                    event::event_time(&event),
                     event::key_code(&event),
                     key,
                     event::key_text(&event),
@@ -310,7 +313,8 @@ impl Canvas {
 
     pub fn on_keyboard_press<F>(&self, mut handler: F)
     where
-        F: 'static + FnMut(PhysicalKey, Key, Option<SmolStr>, KeyLocation, bool, ModifiersState),
+        F: 'static
+            + FnMut(Instant, PhysicalKey, Key, Option<SmolStr>, KeyLocation, bool, ModifiersState),
     {
         let prevent_default = Rc::clone(&self.prevent_default);
         self.handlers.borrow_mut().on_keyboard_press =
@@ -321,6 +325,7 @@ impl Canvas {
                 let key = event::key(&event);
                 let modifiers = event::keyboard_modifiers(&event);
                 handler(
+                    event::event_time(&event),
                     event::key_code(&event),
                     key,
                     event::key_text(&event),
@@ -334,7 +339,14 @@ impl Canvas {
     pub fn on_pointer_leave<F>(&self, handler: F)
     where
         F: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, PointerKind),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                PointerKind,
+            ),
     {
         self.handlers.borrow_mut().pointer_handler.on_pointer_leave(&self.common, handler)
     }
@@ -342,7 +354,14 @@ impl Canvas {
     pub fn on_pointer_enter<F>(&self, handler: F)
     where
         F: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, PointerKind),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                PointerKind,
+            ),
     {
         self.handlers.borrow_mut().pointer_handler.on_pointer_enter(&self.common, handler)
     }
@@ -350,7 +369,14 @@ impl Canvas {
     pub fn on_pointer_release<C>(&self, handler: C)
     where
         C: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, ButtonSource),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                ButtonSource,
+            ),
     {
         self.handlers.borrow_mut().pointer_handler.on_pointer_release(&self.common, handler)
     }
@@ -358,7 +384,14 @@ impl Canvas {
     pub fn on_pointer_press<C>(&self, handler: C)
     where
         C: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, ButtonSource),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                ButtonSource,
+            ),
     {
         self.handlers.borrow_mut().pointer_handler.on_pointer_press(
             &self.common,
@@ -373,11 +406,12 @@ impl Canvas {
             + FnMut(
                 Option<DeviceId>,
                 &mut dyn Iterator<
-                    Item = (ModifiersState, bool, PhysicalPosition<f64>, PointerSource),
+                    Item = (Instant, ModifiersState, bool, PhysicalPosition<f64>, PointerSource),
                 >,
             ),
         B: 'static
             + FnMut(
+                Instant,
                 ModifiersState,
                 Option<DeviceId>,
                 bool,
@@ -396,7 +430,7 @@ impl Canvas {
 
     pub fn on_mouse_wheel<F>(&self, mut handler: F)
     where
-        F: 'static + FnMut(MouseScrollDelta, ModifiersState),
+        F: 'static + FnMut(Instant, MouseScrollDelta, ModifiersState),
     {
         let window = self.common.window.clone();
         let prevent_default = Rc::clone(&self.prevent_default);
@@ -408,7 +442,7 @@ impl Canvas {
 
                 if let Some(delta) = event::mouse_scroll_delta(&window, &event) {
                     let modifiers = event::mouse_modifiers(&event);
-                    handler(delta, modifiers);
+                    handler(event::event_time(&event), delta, modifiers);
                 }
             }));
     }
@@ -523,6 +557,7 @@ impl Canvas {
             self.set_old_size(new_size);
             runner.send_event(runner::Event::WindowEvent {
                 window_id: self.id,
+                timestamp: Instant::now(),
                 event: WindowEvent::SurfaceResized(new_size),
             })
         }

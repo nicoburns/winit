@@ -208,7 +208,9 @@ pub trait ApplicationHandler {
     /// - **Windows:** [`Instant::now()`] sampled inside `WindowProc`.
     /// - **Android:** Motion and key event times (including historical motion samples), converted
     ///   from `CLOCK_MONOTONIC` nanoseconds to [`Instant`]. Other events use [`Instant::now()`].
-    /// - **iOS / Web / Orbital:** [`Instant::now()`].
+    /// - **Web:** Input `Event.timeStamp` (including each coalesced pointer sample), converted
+    ///   using `performance.now()` to [`Instant`]. Other events use [`Instant::now()`].
+    /// - **iOS / Orbital:** [`Instant::now()`].
     fn window_event(
         &mut self,
         event_loop: &dyn ActiveEventLoop,

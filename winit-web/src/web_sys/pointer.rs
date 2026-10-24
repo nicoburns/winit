@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use dpi::PhysicalPosition;
 use web_sys::PointerEvent;
+use web_time::Instant;
 use winit_core::event::{ButtonSource, DeviceId, ElementState, PointerKind, PointerSource};
 use winit_core::keyboard::ModifiersState;
 
@@ -36,7 +37,14 @@ impl PointerHandler {
     pub fn on_pointer_leave<F>(&mut self, canvas_common: &Common, mut handler: F)
     where
         F: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, PointerKind),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                PointerKind,
+            ),
     {
         let window = canvas_common.window.clone();
         self.on_cursor_leave =
@@ -47,14 +55,28 @@ impl PointerHandler {
                 let position =
                     event::pointer_position(&event).to_physical(super::scale_factor(&window));
                 let kind = event::pointer_kind(&event, pointer_id);
-                handler(modifiers, device_id, event.is_primary(), position, kind);
+                handler(
+                    event::event_time(&event),
+                    modifiers,
+                    device_id,
+                    event.is_primary(),
+                    position,
+                    kind,
+                );
             }));
     }
 
     pub fn on_pointer_enter<F>(&mut self, canvas_common: &Common, mut handler: F)
     where
         F: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, PointerKind),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                PointerKind,
+            ),
     {
         let window = canvas_common.window.clone();
         self.on_cursor_enter =
@@ -65,14 +87,28 @@ impl PointerHandler {
                 let position =
                     event::pointer_position(&event).to_physical(super::scale_factor(&window));
                 let kind = event::pointer_kind(&event, pointer_id);
-                handler(modifiers, device_id, event.is_primary(), position, kind);
+                handler(
+                    event::event_time(&event),
+                    modifiers,
+                    device_id,
+                    event.is_primary(),
+                    position,
+                    kind,
+                );
             }));
     }
 
     pub fn on_pointer_release<C>(&mut self, canvas_common: &Common, mut handler: C)
     where
         C: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, ButtonSource),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                ButtonSource,
+            ),
     {
         let window = canvas_common.window.clone();
         self.on_pointer_release =
@@ -94,6 +130,7 @@ impl PointerHandler {
                 };
 
                 handler(
+                    event::event_time(&event),
                     modifiers,
                     mkdid(pointer_id),
                     event.is_primary(),
@@ -110,7 +147,14 @@ impl PointerHandler {
         prevent_default: Rc<Cell<bool>>,
     ) where
         C: 'static
-            + FnMut(ModifiersState, Option<DeviceId>, bool, PhysicalPosition<f64>, ButtonSource),
+            + FnMut(
+                Instant,
+                ModifiersState,
+                Option<DeviceId>,
+                bool,
+                PhysicalPosition<f64>,
+                ButtonSource,
+            ),
     {
         let window = canvas_common.window.clone();
         let canvas = canvas_common.raw().clone();
@@ -156,6 +200,7 @@ impl PointerHandler {
                 };
 
                 handler(
+                    event::event_time(&event),
                     modifiers,
                     mkdid(pointer_id),
                     event.is_primary(),
@@ -176,11 +221,12 @@ impl PointerHandler {
             + FnMut(
                 Option<DeviceId>,
                 &mut dyn Iterator<
-                    Item = (ModifiersState, bool, PhysicalPosition<f64>, PointerSource),
+                    Item = (Instant, ModifiersState, bool, PhysicalPosition<f64>, PointerSource),
                 >,
             ),
         B: 'static
             + FnMut(
+                Instant,
                 ModifiersState,
                 Option<DeviceId>,
                 bool,
@@ -233,6 +279,7 @@ impl PointerHandler {
                     };
 
                     button_handler(
+                        event::event_time(&event),
                         event::mouse_modifiers(&event),
                         device_id,
                         primary,
@@ -251,6 +298,7 @@ impl PointerHandler {
                     device_id,
                     &mut event::pointer_move_event(event).map(|event| {
                         (
+                            event::event_time(&event),
                             event::mouse_modifiers(&event),
                             event.is_primary(),
                             event::pointer_position(&event).to_physical(scale),

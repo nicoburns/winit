@@ -1,5 +1,6 @@
 use std::cell::OnceCell;
 use std::f64;
+use std::time::Duration;
 
 use dpi::{LogicalPosition, PhysicalPosition, Position};
 use smol_str::SmolStr;
@@ -7,6 +8,7 @@ use tracing::warn;
 use wasm_bindgen::prelude::wasm_bindgen;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Event, KeyboardEvent, MouseEvent, Navigator, PointerEvent, WheelEvent};
+use web_time::Instant;
 use winit_core::event::{
     ButtonSource, FingerId, Force, MouseButton, MouseScrollDelta, PointerKind, PointerSource,
     TabletToolAngle, TabletToolButton, TabletToolData, TabletToolKind, TabletToolTilt,
@@ -16,6 +18,28 @@ use winit_core::keyboard::{
 };
 
 use super::Engine;
+
+pub fn event_time(event: &Event) -> Instant {
+    thread_local! {
+        static PERFORMANCE: web_sys::Performance = {
+            #[wasm_bindgen]
+            extern "C" {
+                type Global;
+
+                #[wasm_bindgen(method, getter)]
+                fn performance(this: &Global) -> web_sys::Performance;
+            }
+
+            let global: Global = js_sys::global().unchecked_into();
+            global.performance()
+        };
+    }
+
+    PERFORMANCE.with(|performance| {
+        let age = ((performance.now() - event.time_stamp()).max(0.0)) / 1000.0;
+        Instant::now() - Duration::from_secs_f64(age)
+    })
+}
 
 bitflags::bitflags! {
     // https://www.w3.org/TR/pointerevents3/#the-buttons-property
@@ -358,4 +382,60 @@ pub fn has_coalesced_events_support(event: &PointerEvent) -> bool {
             !support.has_get_coalesced_events().is_undefined()
         })
     })
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    fn sample(timestamp: f64) -> PointerEvent {
+        let event = js_sys::Object::new();
+        js_sys::Reflect::set(&event, &"timeStamp".into(), &timestamp.into()).unwrap();
+        event.unchecked_into()
+    }
+
+    fn coalesced(samples: &[PointerEvent]) -> PointerEvent {
+        let event = sample(0.0);
+        let array = samples.iter().collect::<js_sys::Array>();
+        js_sys::Reflect::set(&event, &"samples".into(), &array).unwrap();
+        js_sys::Reflect::set(
+            &event,
+            &"getCoalescedEvents".into(),
+            &js_sys::Function::new_no_args("return this.samples"),
+        )
+        .unwrap();
+        event
+    }
+
+    #[wasm_bindgen_test]
+    fn coalesced_samples_keep_their_times() {
+        let performance: web_sys::Performance =
+            js_sys::Reflect::get(&js_sys::global(), &"performance".into())
+                .unwrap()
+                .unchecked_into();
+        let sample_interval = performance.now() / 2.0;
+        let event = coalesced(&[sample(0.0), sample(sample_interval)]);
+        let times: Vec<_> = pointer_move_event(event).map(|event| event_time(&event)).collect();
+        assert_eq!(times.len(), 2);
+        let interval = times[1].duration_since(times[0]);
+        assert!(
+            interval.abs_diff(Duration::from_secs_f64(sample_interval / 1000.0))
+                < Duration::from_millis(10)
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn empty_coalesced_samples() {
+        assert_eq!(pointer_move_event(coalesced(&[])).count(), 0);
+    }
+
+    #[wasm_bindgen_test]
+    fn future_timestamp_is_clamped_to_now() {
+        let before = Instant::now();
+        let timestamp = event_time(&sample(1e30));
+        let after = Instant::now();
+        assert!(before <= timestamp && timestamp <= after);
+    }
 }
