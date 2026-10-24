@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use dispatch2::MainThreadBound;
 use dpi::{
@@ -49,6 +50,7 @@ define_class!(
             let _entered = debug_span!("becomeKeyWindow").entered();
             let mtm = MainThreadMarker::new().unwrap();
             app_state::handle_nonuser_event(mtm, EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: self.id(),
                 event: WindowEvent::Focused(true),
             });
@@ -60,6 +62,7 @@ define_class!(
             let _entered = debug_span!("resignKeyWindow").entered();
             let mtm = MainThreadMarker::new().unwrap();
             app_state::handle_nonuser_event(mtm, EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: self.id(),
                 event: WindowEvent::Focused(false),
             });

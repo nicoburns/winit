@@ -47,7 +47,7 @@ fn get_handler(mtm: MainThreadMarker) -> &'static EventHandler {
 
 #[derive(Debug)]
 pub(crate) enum EventWrapper {
-    Window { window_id: WindowId, event: WindowEvent },
+    Window { window_id: WindowId, timestamp: Instant, event: WindowEvent },
     ScaleFactorChanged(ScaleFactorChanged),
 }
 
@@ -365,6 +365,7 @@ pub(crate) fn send_occluded_event_for_all_windows(application: &UIApplication, o
     for window in application.windows().iter() {
         if let Ok(window) = window.downcast::<WinitUIWindow>() {
             events.push(EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::Occluded(occluded),
             });
@@ -388,6 +389,7 @@ pub fn handle_main_events_cleared(mtm: MainThreadMarker) {
     this.main_events_cleared_transition();
     let queued_gpu_redraws = this.queued_gpu_redraws.take();
     let redraw_events = queued_gpu_redraws.into_iter().map(|window| EventWrapper::Window {
+        timestamp: Instant::now(),
         window_id: window.id(),
         event: WindowEvent::RedrawRequested,
     });
@@ -424,6 +426,7 @@ pub(crate) fn terminated(application: &UIApplication) {
     for window in application.windows().iter() {
         if let Ok(window) = window.downcast::<WinitUIWindow>() {
             events.push(EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::Destroyed,
             });
@@ -441,9 +444,8 @@ pub(crate) fn terminated(application: &UIApplication) {
 
 fn handle_wrapped_event(mtm: MainThreadMarker, event: EventWrapper) {
     match event {
-        EventWrapper::Window { window_id, event } => get_handler(mtm).handle(|app| {
-            app.window_event(&ActiveEventLoop { mtm }, window_id, Instant::now(), event)
-        }),
+        EventWrapper::Window { window_id, timestamp, event } => get_handler(mtm)
+            .handle(|app| app.window_event(&ActiveEventLoop { mtm }, window_id, timestamp, event)),
         EventWrapper::ScaleFactorChanged(event) => handle_hidpi_proxy(mtm, event),
     }
 }

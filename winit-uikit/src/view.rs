@@ -1,5 +1,6 @@
 #![allow(clippy::unnecessary_cast)]
 use std::cell::{Cell, RefCell};
+use std::time::{Duration, Instant};
 
 use dpi::PhysicalPosition;
 use objc2::rc::Retained;
@@ -22,6 +23,11 @@ use winit_core::keyboard::{Key, KeyCode, KeyLocation, NamedKey, NativeKeyCode, P
 
 use super::app_state::{self, EventWrapper};
 use super::window::WinitUIWindow;
+
+#[link(name = "QuartzCore", kind = "framework")]
+unsafe extern "C" {
+    fn CACurrentMediaTime() -> f64;
+}
 
 pub struct WinitViewState {
     pinch_gesture_recognizer: RefCell<Option<Retained<UIPinchGestureRecognizer>>>,
@@ -52,6 +58,7 @@ define_class!(
             let mtm = MainThreadMarker::new().unwrap();
             let window = self.window().unwrap();
             app_state::handle_nonuser_event(mtm, EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::RedrawRequested,
             });
@@ -74,6 +81,7 @@ define_class!(
 
             let window = self.window().unwrap();
             app_state::handle_nonuser_event(mtm, EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::SurfaceResized(size),
             });
@@ -119,6 +127,7 @@ define_class!(
                     suggested_size: size.to_physical(scale_factor),
                 }))
                 .chain(std::iter::once(EventWrapper::Window {
+                    timestamp: Instant::now(),
                     window_id,
                     event: WindowEvent::SurfaceResized(size.to_physical(scale_factor)),
                 })),
@@ -136,25 +145,25 @@ define_class!(
         #[unsafe(method(touchesBegan:withEvent:))]
         fn touches_began(&self, touches: &NSSet<UITouch>, _event: Option<&UIEvent>) {
             let _entered = debug_span!("touchesBegan:withEvent:").entered();
-            self.handle_touches(touches)
+            self.handle_touches(touches, None)
         }
 
         #[unsafe(method(touchesMoved:withEvent:))]
-        fn touches_moved(&self, touches: &NSSet<UITouch>, _event: Option<&UIEvent>) {
+        fn touches_moved(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
             let _entered = debug_span!("touchesMoved:withEvent:").entered();
-            self.handle_touches(touches)
+            self.handle_touches(touches, event)
         }
 
         #[unsafe(method(touchesEnded:withEvent:))]
         fn touches_ended(&self, touches: &NSSet<UITouch>, _event: Option<&UIEvent>) {
             let _entered = debug_span!("touchesEnded:withEvent:").entered();
-            self.handle_touches(touches)
+            self.handle_touches(touches, None)
         }
 
         #[unsafe(method(touchesCancelled:withEvent:))]
         fn touches_cancelled(&self, touches: &NSSet<UITouch>, _event: Option<&UIEvent>) {
             let _entered = debug_span!("touchesCancelled:withEvent:").entered();
-            self.handle_touches(touches)
+            self.handle_touches(touches, None)
         }
 
         #[unsafe(method(pinchGesture:))]
@@ -184,6 +193,7 @@ define_class!(
             };
 
             let gesture_event = EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::PinchGesture { device_id: None, delta: delta as f64, phase },
             };
@@ -199,6 +209,7 @@ define_class!(
 
             if recognizer.state() == UIGestureRecognizerState::Ended {
                 let gesture_event = EventWrapper::Window {
+                    timestamp: Instant::now(),
                     window_id: window.id(),
                     event: WindowEvent::DoubleTapGesture { device_id: None },
                 };
@@ -241,6 +252,7 @@ define_class!(
 
             // Make delta negative to match macos, convert to degrees
             let gesture_event = EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::RotationGesture {
                     device_id: None,
@@ -294,6 +306,7 @@ define_class!(
             };
 
             let gesture_event = EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id: window.id(),
                 event: WindowEvent::PanGesture {
                     device_id: None,
@@ -477,148 +490,102 @@ impl WinitView {
         }
     }
 
-    fn handle_touches(&self, touches: &NSSet<UITouch>) {
+    fn handle_touches(&self, touches: &NSSet<UITouch>, event: Option<&UIEvent>) {
+        let media_now = unsafe { CACurrentMediaTime() };
+        let now = Instant::now();
         let window = self.window().unwrap();
         let mut touch_events = Vec::new();
         for touch in touches {
-            let logical_location = touch.locationInView(None);
-            let touch_type = touch.r#type();
-            let force = if available!(ios = 9.0, tvos = 9.0, visionos = 1.0) {
-                let use_force = match touch_type {
-                    UITouchType::Pencil => true,
-                    _ => {
-                        let trait_collection = self.traitCollection();
-                        trait_collection.forceTouchCapability() == UIForceTouchCapability::Available
-                    },
-                };
-
-                if use_force {
-                    let force = touch.force();
-                    let max_possible_force = touch.maximumPossibleForce();
-                    Some(Force::Calibrated {
-                        force: force as _,
-                        max_possible_force: max_possible_force as _,
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
             let touch_id = Retained::as_ptr(&touch) as usize;
             let phase = touch.phase();
-            let position = {
-                let scale_factor = self.contentScaleFactor();
-                PhysicalPosition::from_logical::<(f64, f64), f64>(
-                    (logical_location.x as _, logical_location.y as _),
-                    scale_factor as f64,
-                )
-            };
-            let window_id = window.id();
-            let finger_id = FingerId::from_raw(touch_id);
-
-            let ivars = self.ivars();
-
-            match phase {
-                UITouchPhase::Began => {
-                    let primary = if let UITouchType::Pencil = touch_type {
-                        true
-                    } else {
-                        ivars.fingers.set(ivars.fingers.get() + 1);
-                        // Keep the primary finger around until we clear all the fingers to
-                        // recognize it when user briefly removes it.
-                        match ivars.primary_finger.get() {
-                            Some(primary_id) => primary_id == finger_id,
-                            None => {
-                                debug_assert_eq!(
-                                    ivars.fingers.get(),
-                                    1,
-                                    "number of fingers were not counted correctly"
-                                );
-                                ivars.primary_finger.set(Some(finger_id));
-                                true
-                            },
-                        }
+            let samples = event
+                .and_then(|event| event.coalescedTouchesForTouch(&touch))
+                .filter(|samples| !samples.is_empty())
+                .map(|samples| samples.to_vec())
+                .unwrap_or_else(|| vec![touch]);
+            for touch in samples {
+                let timestamp =
+                    now - Duration::from_secs_f64((media_now - touch.timestamp()).max(0.0));
+                let logical_location = touch.locationInView(None);
+                let touch_type = touch.r#type();
+                let force = if available!(ios = 9.0, tvos = 9.0, visionos = 1.0) {
+                    let use_force = match touch_type {
+                        UITouchType::Pencil => true,
+                        _ => {
+                            let trait_collection = self.traitCollection();
+                            trait_collection.forceTouchCapability()
+                                == UIForceTouchCapability::Available
+                        },
                     };
 
-                    touch_events.push(EventWrapper::Window {
-                        window_id,
-                        event: WindowEvent::PointerEntered {
-                            device_id: None,
-                            primary,
-                            position,
-                            kind: if let UITouchType::Pencil = touch_type {
-                                PointerKind::TabletTool(TabletToolKind::Pencil)
-                            } else {
-                                PointerKind::Touch(finger_id)
-                            },
-                        },
-                    });
-                    touch_events.push(EventWrapper::Window {
-                        window_id,
-                        event: WindowEvent::PointerButton {
-                            device_id: None,
-                            primary,
-                            state: ElementState::Pressed,
-                            position,
-                            button: if let UITouchType::Pencil = touch_type {
-                                let tool_data = self.tablet_tool_data_for_pencil(&touch);
-                                ButtonSource::TabletTool {
-                                    kind: TabletToolKind::Pencil,
-                                    button: TabletToolButton::Contact,
-                                    data: tool_data,
-                                }
-                            } else {
-                                ButtonSource::Touch { finger_id, force }
-                            },
-                            is_macos_activation_click: false,
-                        },
-                    });
-                },
-                UITouchPhase::Moved => {
-                    let (primary, source) = if let UITouchType::Pencil = touch_type {
-                        let tool_data = self.tablet_tool_data_for_pencil(&touch);
-                        (true, PointerSource::TabletTool {
-                            kind: TabletToolKind::Pencil,
-                            data: tool_data,
+                    if use_force {
+                        let force = touch.force();
+                        let max_possible_force = touch.maximumPossibleForce();
+                        Some(Force::Calibrated {
+                            force: force as _,
+                            max_possible_force: max_possible_force as _,
                         })
                     } else {
-                        (ivars.primary_finger.get().unwrap() == finger_id, PointerSource::Touch {
-                            finger_id,
-                            force,
-                        })
-                    };
+                        None
+                    }
+                } else {
+                    None
+                };
+                let position = {
+                    let scale_factor = self.contentScaleFactor();
+                    PhysicalPosition::from_logical::<(f64, f64), f64>(
+                        (logical_location.x as _, logical_location.y as _),
+                        scale_factor as f64,
+                    )
+                };
+                let window_id = window.id();
+                let finger_id = FingerId::from_raw(touch_id);
 
-                    touch_events.push(EventWrapper::Window {
-                        window_id,
-                        event: WindowEvent::PointerMoved {
-                            device_id: None,
-                            primary,
-                            position,
-                            source,
-                        },
-                    });
-                },
-                // 2 is UITouchPhase::Stationary and is not expected here
-                UITouchPhase::Ended | UITouchPhase::Cancelled => {
-                    let primary = if let UITouchType::Pencil = touch_type {
-                        true
-                    } else {
-                        ivars.fingers.set(ivars.fingers.get() - 1);
-                        let primary = ivars.primary_finger.get().unwrap() == finger_id;
-                        if ivars.fingers.get() == 0 {
-                            ivars.primary_finger.set(None);
-                        }
-                        primary
-                    };
+                let ivars = self.ivars();
 
-                    if let UITouchPhase::Ended = phase {
+                match phase {
+                    UITouchPhase::Began => {
+                        let primary = if let UITouchType::Pencil = touch_type {
+                            true
+                        } else {
+                            ivars.fingers.set(ivars.fingers.get() + 1);
+                            // Keep the primary finger around until we clear all the fingers to
+                            // recognize it when user briefly removes it.
+                            match ivars.primary_finger.get() {
+                                Some(primary_id) => primary_id == finger_id,
+                                None => {
+                                    debug_assert_eq!(
+                                        ivars.fingers.get(),
+                                        1,
+                                        "number of fingers were not counted correctly"
+                                    );
+                                    ivars.primary_finger.set(Some(finger_id));
+                                    true
+                                },
+                            }
+                        };
+
                         touch_events.push(EventWrapper::Window {
+                            timestamp,
+                            window_id,
+                            event: WindowEvent::PointerEntered {
+                                device_id: None,
+                                primary,
+                                position,
+                                kind: if let UITouchType::Pencil = touch_type {
+                                    PointerKind::TabletTool(TabletToolKind::Pencil)
+                                } else {
+                                    PointerKind::Touch(finger_id)
+                                },
+                            },
+                        });
+                        touch_events.push(EventWrapper::Window {
+                            timestamp,
                             window_id,
                             event: WindowEvent::PointerButton {
                                 device_id: None,
                                 primary,
-                                state: ElementState::Released,
+                                state: ElementState::Pressed,
                                 position,
                                 button: if let UITouchType::Pencil = touch_type {
                                     let tool_data = self.tablet_tool_data_for_pencil(&touch);
@@ -633,23 +600,86 @@ impl WinitView {
                                 is_macos_activation_click: false,
                             },
                         });
-                    }
+                    },
+                    UITouchPhase::Moved => {
+                        let (primary, source) = if let UITouchType::Pencil = touch_type {
+                            let tool_data = self.tablet_tool_data_for_pencil(&touch);
+                            (true, PointerSource::TabletTool {
+                                kind: TabletToolKind::Pencil,
+                                data: tool_data,
+                            })
+                        } else {
+                            (
+                                ivars.primary_finger.get().unwrap() == finger_id,
+                                PointerSource::Touch { finger_id, force },
+                            )
+                        };
 
-                    touch_events.push(EventWrapper::Window {
-                        window_id,
-                        event: WindowEvent::PointerLeft {
-                            device_id: None,
-                            primary,
-                            position: Some(position),
-                            kind: if let UITouchType::Pencil = touch_type {
-                                PointerKind::TabletTool(TabletToolKind::Pencil)
-                            } else {
-                                PointerKind::Touch(finger_id)
+                        touch_events.push(EventWrapper::Window {
+                            timestamp,
+                            window_id,
+                            event: WindowEvent::PointerMoved {
+                                device_id: None,
+                                primary,
+                                position,
+                                source,
                             },
-                        },
-                    });
-                },
-                _ => panic!("unexpected touch phase: {phase:?}"),
+                        });
+                    },
+                    // 2 is UITouchPhase::Stationary and is not expected here
+                    UITouchPhase::Ended | UITouchPhase::Cancelled => {
+                        let primary = if let UITouchType::Pencil = touch_type {
+                            true
+                        } else {
+                            ivars.fingers.set(ivars.fingers.get() - 1);
+                            let primary = ivars.primary_finger.get().unwrap() == finger_id;
+                            if ivars.fingers.get() == 0 {
+                                ivars.primary_finger.set(None);
+                            }
+                            primary
+                        };
+
+                        if let UITouchPhase::Ended = phase {
+                            touch_events.push(EventWrapper::Window {
+                                timestamp,
+                                window_id,
+                                event: WindowEvent::PointerButton {
+                                    device_id: None,
+                                    primary,
+                                    state: ElementState::Released,
+                                    position,
+                                    button: if let UITouchType::Pencil = touch_type {
+                                        let tool_data = self.tablet_tool_data_for_pencil(&touch);
+                                        ButtonSource::TabletTool {
+                                            kind: TabletToolKind::Pencil,
+                                            button: TabletToolButton::Contact,
+                                            data: tool_data,
+                                        }
+                                    } else {
+                                        ButtonSource::Touch { finger_id, force }
+                                    },
+                                    is_macos_activation_click: false,
+                                },
+                            });
+                        }
+
+                        touch_events.push(EventWrapper::Window {
+                            timestamp,
+                            window_id,
+                            event: WindowEvent::PointerLeft {
+                                device_id: None,
+                                primary,
+                                position: Some(position),
+                                kind: if let UITouchType::Pencil = touch_type {
+                                    PointerKind::TabletTool(TabletToolKind::Pencil)
+                                } else {
+                                    PointerKind::Touch(finger_id)
+                                },
+                            },
+                        });
+                    },
+                    _ => panic!("unexpected touch phase: {phase:?}"),
+                }
             }
         }
         let mtm = MainThreadMarker::new().unwrap();
@@ -693,6 +723,7 @@ impl WinitView {
                 let text = smol_str::SmolStr::from_iter([c]);
                 // Emit both press and release events
                 [ElementState::Pressed, ElementState::Released].map(|state| EventWrapper::Window {
+                    timestamp: Instant::now(),
                     window_id,
                     event: WindowEvent::KeyboardInput {
                         device_id: None,
@@ -728,6 +759,7 @@ impl WinitView {
         app_state::handle_nonuser_events(
             mtm,
             [ElementState::Pressed, ElementState::Released].map(|state| EventWrapper::Window {
+                timestamp: Instant::now(),
                 window_id,
                 event: WindowEvent::KeyboardInput {
                     device_id: None,
