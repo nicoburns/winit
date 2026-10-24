@@ -13,7 +13,7 @@ use objc2_ui_kit::UIPasteboard;
 use winit_core::data_transfer::{
     DataTransfer, DataTransferId, DataTransferSend, SendData, TransferType, TypeHint, TypedData,
 };
-use winit_core::error::TransferError;
+use winit_core::error::{NotSupportedError, TransferError};
 
 /// A uniform type identifier used by [`UIPasteboard`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,15 +94,26 @@ impl Clone for Pasteboard {
 }
 
 impl Pasteboard {
+    fn available_types(pasteboard: &UIPasteboard) -> Arc<[PasteboardType]> {
+        let mut types = Vec::new();
+        if let Some(items) = pasteboard.pasteboardTypesForItemSet(None) {
+            for item in &items {
+                for type_ in &item {
+                    let type_ = PasteboardType::new(&type_.to_string());
+                    if !types.contains(&type_) {
+                        types.push(type_);
+                    }
+                }
+            }
+        }
+        types.into()
+    }
+
     fn new(pasteboard: Retained<UIPasteboard>, mtm: MainThreadMarker) -> Self {
         // SAFETY: All pasteboard access is confined to the main thread. Metadata queries do not
         // read clipboard contents; string/URLs/data reads below may show the iOS paste prompt.
         let change_count = unsafe { pasteboard.changeCount() };
-        let types = unsafe { pasteboard.pasteboardTypes() }
-            .iter()
-            .map(|type_| PasteboardType::new(&type_.to_string()))
-            .collect::<Vec<_>>()
-            .into();
+        let types = Self::available_types(&pasteboard);
         Self { pasteboard: MainThreadBound::new(pasteboard, mtm), change_count, types }
     }
 
@@ -167,9 +178,12 @@ impl TypedData for PasteboardValue {
                 uris.into_iter().map(|uri| uri + "\r\n").collect::<String>().into_bytes()
             }),
             _ => self.pasteboard.try_access(|pb| {
-                pb.dataForPasteboardType(&NSString::from_str(self.type_.identifier()))
-                    .map(|data| data.to_vec())
-                    .ok_or_else(|| io::ErrorKind::InvalidData.into())
+                pb.dataForPasteboardType_inItemSet(
+                    &NSString::from_str(self.type_.identifier()),
+                    None,
+                )
+                .and_then(|items| items.firstObject().map(|data| data.to_vec()))
+                .ok_or_else(|| io::ErrorKind::InvalidData.into())
             })?,
         }
     }
@@ -178,7 +192,8 @@ impl TypedData for PasteboardValue {
         if self.type_.hint() == Some(TypeHint::Plaintext) {
             self.pasteboard.try_access(|pb| {
                 // SAFETY: Running on the main thread. UIKit converts native text to NSString.
-                unsafe { pb.string() }
+                unsafe { pb.strings() }
+                    .and_then(|strings| strings.firstObject())
                     .map(|s| s.to_string())
                     .ok_or_else(|| io::ErrorKind::InvalidData.into())
             })?
@@ -228,8 +243,7 @@ impl DataTransferState {
 
     pub(crate) fn clipboard(&self, _mtm: MainThreadMarker) -> Option<DataTransferId> {
         let pb = UIPasteboard::generalPasteboard();
-        // SAFETY: Running on the main thread. Only query metadata, not clipboard contents.
-        if unsafe { pb.numberOfItems() == 0 || pb.pasteboardTypes().is_empty() } {
+        if Pasteboard::available_types(&pb).is_empty() {
             return None;
         }
         Some(self.clipboard_transfer_id(unsafe { pb.changeCount() }))
@@ -282,6 +296,9 @@ pub(crate) fn set_clipboard(
     if !keys.is_empty() {
         let keys = keys.iter().map(|key| &**key).collect::<Vec<_>>();
         uri_items.insert(0, NSDictionary::from_retained_objects(&keys, &values));
+    }
+    if uri_items.is_empty() {
+        return Err(NotSupportedError::new("no supported clipboard representations").into());
     }
     let items = NSArray::from_retained_slice(&uri_items);
     // SAFETY: Running on the main thread; values are NSString, NSData or NSURL as required by
