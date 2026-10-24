@@ -206,8 +206,10 @@ pub trait ApplicationHandler {
     /// - **Wayland:** the `time` field on `wl_pointer` / `wl_keyboard` / `wl_touch` and
     ///   `utime_hi`/`utime_lo` on `zwp_relative_pointer_v1`, calibrated the same way.
     /// - **Windows:** Pointer history uses `POINTER_INFO.PerformanceCount` (QPC), falling back to
-    ///   `dwTime` (GetTickCount milliseconds). Touch input uses `TOUCHINPUT.dwTime`. Other events
-    ///   use [`Instant::now()`] sampled inside `WindowProc`.
+    ///   `dwTime` (GetTickCount milliseconds). Touch input uses `TOUCHINPUT.dwTime`. Classic mouse
+    ///   and keyboard input uses `GetMessageTime()`; keys retain the originating key message's time
+    ///   while waiting for character messages. Other events use [`Instant::now()`] sampled inside
+    ///   `WindowProc`.
     /// - **Android:** Motion and key event times (including historical motion samples), converted
     ///   from `CLOCK_MONOTONIC` nanoseconds to [`Instant`]. Other events use [`Instant::now()`].
     /// - **Web:** Input `Event.timeStamp` (including each coalesced pointer sample), converted

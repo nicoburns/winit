@@ -5,6 +5,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Mutex, MutexGuard};
+use std::time::Instant;
 
 use smol_str::SmolStr;
 use tracing::{trace, warn};
@@ -36,6 +37,7 @@ use crate::util::{loword, primarylangid};
 pub type ExScancode = u16;
 
 pub struct MessageAsKeyEvent {
+    pub timestamp: Instant,
     pub event: KeyEvent,
     pub is_synthetic: bool,
 }
@@ -46,6 +48,7 @@ pub struct MessageAsKeyEvent {
 /// in multiple window messages. In other words: a Winit `KeyEvent` cannot be built from a single
 /// window message. Therefore, this type keeps track of certain information from previous events so
 /// that a `KeyEvent` can be constructed when the last event related to a keypress is received.
+/// The originating key message's timestamp is retained through character assembly and queuing.
 ///
 /// `PeekMessage` is sometimes used to determine whether the next window message still belongs to
 /// the current keypress. If it doesn't and the current state represents a key event waiting to be
@@ -79,6 +82,7 @@ impl KeyEventBuilder {
         msg_kind: u32,
         wparam: WPARAM,
         lparam: LPARAM,
+        timestamp: Instant,
         result: &mut ProcResult,
     ) -> Vec<MessageAsKeyEvent> {
         enum MatchResult {
@@ -117,6 +121,7 @@ impl KeyEventBuilder {
                         wparam,
                         lparam,
                         ElementState::Pressed,
+                        timestamp,
                         &mut layouts,
                     ));
                     let mut event_info = self.event_info.lock().unwrap();
@@ -144,10 +149,9 @@ impl KeyEventBuilder {
                     }
                     if let Some(event_info) = finished_event_info {
                         let ev = event_info.finalize();
-                        return MatchResult::MessagesToDispatch(self.pending.complete_pending(
-                            pending_token,
-                            MessageAsKeyEvent { event: ev, is_synthetic: false },
-                        ));
+                        return MatchResult::MessagesToDispatch(
+                            self.pending.complete_pending(pending_token, ev),
+                        );
                     }
                     MatchResult::TokenToRemove(pending_token)
                 },
@@ -158,10 +162,9 @@ impl KeyEventBuilder {
                     // to this key press
                     let event_info = self.event_info.lock().unwrap().take().unwrap();
                     let ev = event_info.finalize();
-                    MatchResult::MessagesToDispatch(self.pending.complete_pending(
-                        pending_token,
-                        MessageAsKeyEvent { event: ev, is_synthetic: false },
-                    ))
+                    MatchResult::MessagesToDispatch(
+                        self.pending.complete_pending(pending_token, ev),
+                    )
                 },
                 WM_CHAR | WM_SYSCHAR => {
                     let mut event_info = self.event_info.lock().unwrap();
@@ -250,10 +253,9 @@ impl KeyEventBuilder {
                             event_info.text = PartialText::Text(key.to_text().map(SmolStr::new));
                         }
                         let ev = event_info.finalize();
-                        MatchResult::MessagesToDispatch(self.pending.complete_pending(
-                            pending_token,
-                            MessageAsKeyEvent { event: ev, is_synthetic: false },
-                        ))
+                        MatchResult::MessagesToDispatch(
+                            self.pending.complete_pending(pending_token, ev),
+                        )
                     }
                 },
                 WM_KEYUP | WM_SYSKEYUP => {
@@ -265,6 +267,7 @@ impl KeyEventBuilder {
                         wparam,
                         lparam,
                         ElementState::Released,
+                        timestamp,
                         &mut layouts,
                     );
                     // We MUST release the layout lock before calling `next_kbd_msg`, otherwise it
@@ -287,10 +290,9 @@ impl KeyEventBuilder {
                     }
                     if let Some(event_info) = valid_event_info {
                         let event = event_info.finalize();
-                        return MatchResult::MessagesToDispatch(self.pending.complete_pending(
-                            pending_token,
-                            MessageAsKeyEvent { event, is_synthetic: false },
-                        ));
+                        return MatchResult::MessagesToDispatch(
+                            self.pending.complete_pending(pending_token, event),
+                        );
                     }
                     MatchResult::TokenToRemove(pending_token)
                 },
@@ -437,6 +439,7 @@ impl KeyEventBuilder {
             None
         };
         let event_info = PartialKeyEventInfo {
+            timestamp: Instant::now(),
             vkey: vk,
             logical_key: PartialLogicalKey::This(logical_key.clone()),
             key_without_modifiers,
@@ -449,9 +452,10 @@ impl KeyEventBuilder {
         };
 
         let mut event = event_info.finalize();
-        event.logical_key = logical_key;
-        event.text_with_all_modifiers = text;
-        Some(MessageAsKeyEvent { event, is_synthetic: true })
+        event.event.logical_key = logical_key;
+        event.event.text_with_all_modifiers = text;
+        event.is_synthetic = true;
+        Some(event)
     }
 }
 
@@ -473,6 +477,7 @@ enum PartialLogicalKey {
 }
 
 struct PartialKeyEventInfo {
+    timestamp: Instant,
     vkey: VIRTUAL_KEY,
     key_state: ElementState,
     is_repeat: bool,
@@ -494,6 +499,7 @@ impl PartialKeyEventInfo {
         wparam: WPARAM,
         lparam: LPARAM,
         state: ElementState,
+        timestamp: Instant,
         layouts: &mut MutexGuard<'_, LayoutCache>,
     ) -> Self {
         const NO_MODS: WindowsModifiers = WindowsModifiers::empty();
@@ -571,6 +577,7 @@ impl PartialKeyEventInfo {
         };
 
         PartialKeyEventInfo {
+            timestamp,
             vkey,
             key_state: state,
             logical_key,
@@ -583,7 +590,7 @@ impl PartialKeyEventInfo {
         }
     }
 
-    fn finalize(self) -> KeyEvent {
+    fn finalize(self) -> MessageAsKeyEvent {
         let mut char_with_all_modifiers = None;
         if !self.utf16parts.is_empty() {
             let os_string = OsString::from_wide(&self.utf16parts);
@@ -622,15 +629,19 @@ impl PartialKeyEventInfo {
             PartialLogicalKey::This(v) => v,
         };
 
-        KeyEvent {
-            physical_key: self.physical_key,
-            logical_key,
-            text,
-            location: self.location,
-            state: self.key_state,
-            repeat: self.is_repeat,
-            text_with_all_modifiers: char_with_all_modifiers,
-            key_without_modifiers: self.key_without_modifiers,
+        MessageAsKeyEvent {
+            timestamp: self.timestamp,
+            is_synthetic: false,
+            event: KeyEvent {
+                physical_key: self.physical_key,
+                logical_key,
+                text,
+                location: self.location,
+                state: self.key_state,
+                repeat: self.is_repeat,
+                text_with_all_modifiers: char_with_all_modifiers,
+                key_without_modifiers: self.key_without_modifiers,
+            },
         }
     }
 }
@@ -1261,4 +1272,73 @@ pub fn scancode_to_physicalkey(scancode: u32) -> PhysicalKey {
 
         _ => return PhysicalKey::Unidentified(NativeKeyCode::Windows(scancode as u16)),
     })
+}
+
+#[cfg(test)]
+mod timestamp_tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn partial_key(timestamp: Instant, key_state: ElementState) -> PartialKeyEventInfo {
+        PartialKeyEventInfo {
+            timestamp,
+            vkey: b'A' as VIRTUAL_KEY,
+            key_state,
+            is_repeat: false,
+            physical_key: PhysicalKey::Code(KeyCode::KeyA),
+            location: KeyLocation::Standard,
+            logical_key: PartialLogicalKey::TextOr(Key::Character("a".into())),
+            key_without_modifiers: Key::Character("a".into()),
+            utf16parts: Vec::new(),
+            text: PartialText::System(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn character_assembly_preserves_keydown_timestamp() {
+        let timestamp = Instant::now() - Duration::from_millis(100);
+        let mut partial = partial_key(timestamp, ElementState::Pressed);
+        partial.utf16parts.push(b'a' as u16);
+        partial.text = PartialText::System(vec![b'a' as u16]);
+        let event = partial.finalize();
+        assert_eq!(event.timestamp, timestamp);
+        assert_eq!(event.event.text.as_deref(), Some("a"));
+        assert!(!event.is_synthetic);
+    }
+
+    #[test]
+    fn empty_and_invalid_text_preserve_key_timestamp() {
+        let timestamp = Instant::now();
+        for state in [ElementState::Pressed, ElementState::Released] {
+            for text in [vec![], vec![0xd800]] {
+                let mut partial = partial_key(timestamp, state);
+                partial.text = PartialText::System(text);
+                let event = partial.finalize();
+                assert_eq!(event.timestamp, timestamp);
+                assert!(event.event.text.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn pending_keys_retain_origin_times_and_order() {
+        let queue = PendingEventQueue::default();
+        let timestamp = Instant::now();
+        let first = queue.add_pending();
+        let second = queue.add_pending();
+        let later = timestamp + Duration::from_millis(25);
+        assert!(
+            queue
+                .complete_pending(second, partial_key(later, ElementState::Released).finalize())
+                .is_empty()
+        );
+        let events =
+            queue.complete_pending(first, partial_key(timestamp, ElementState::Pressed).finalize());
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].timestamp, timestamp);
+        assert_eq!(events[1].timestamp, later);
+        let canceled = queue.add_pending();
+        assert!(queue.remove_pending(canceled).is_empty());
+    }
 }
