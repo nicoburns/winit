@@ -21,6 +21,8 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::DataExchange::CountClipboardFormats;
 use windows_sys::Win32::System::Ole::{OleSetClipboard, RevokeDragDrop};
+use windows_sys::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+use windows_sys::Win32::System::SystemInformation::GetTickCount;
 use windows_sys::Win32::System::Threading::{
     CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateWaitableTimerExW, GetCurrentThreadId, INFINITE,
     SetWaitableTimer, TIMER_ALL_ACCESS,
@@ -121,14 +123,57 @@ pub(crate) struct WindowData {
     pub recurse_depth: Cell<u32>,
 }
 
+struct PointerTimestamp {
+    now: Instant,
+    counter: u64,
+    frequency: u64,
+    ticks: u32,
+}
+
+impl PointerTimestamp {
+    fn now() -> Self {
+        let mut counter = 0;
+        let mut frequency = 0;
+        unsafe {
+            QueryPerformanceFrequency(&mut frequency);
+            QueryPerformanceCounter(&mut counter);
+        }
+        Self {
+            now: Instant::now(),
+            counter: counter as u64,
+            frequency: frequency as u64,
+            ticks: unsafe { GetTickCount() },
+        }
+    }
+
+    fn convert_ticks(&self, timestamp: u32) -> Instant {
+        let delta = self.ticks.wrapping_sub(timestamp);
+        let age = if delta > u32::MAX / 2 { 0 } else { delta };
+        self.now.checked_sub(Duration::from_millis(age.into())).unwrap_or(self.now)
+    }
+
+    fn convert_counter(&self, counter: u64, ticks: u32) -> Instant {
+        if counter == 0 || self.frequency == 0 {
+            return self.convert_ticks(ticks);
+        }
+        let delta = self.counter.saturating_sub(counter);
+        let age = Duration::new(
+            delta / self.frequency,
+            ((u128::from(delta % self.frequency) * 1_000_000_000) / u128::from(self.frequency))
+                as u32,
+        );
+        self.now.checked_sub(age).unwrap_or(self.now)
+    }
+}
+
 impl WindowData {
     fn send_window_event(&self, window: HWND, event: WindowEvent) {
+        self.send_window_event_at(window, Instant::now(), event);
+    }
+
+    fn send_window_event_at(&self, window: HWND, timestamp: Instant, event: WindowEvent) {
         let window_id = WindowId::from_raw(window as usize);
-        self.event_loop_runner.send_event(Event::Window {
-            window_id,
-            event,
-            timestamp: Instant::now(),
-        });
+        self.event_loop_runner.send_event(Event::Window { window_id, event, timestamp });
     }
 
     fn window_state_lock(&self) -> MutexGuard<'_, WindowState> {
@@ -2077,6 +2122,7 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_TOUCH => {
+            let clock = PointerTimestamp::now();
             use winit_core::event::ButtonSource::Touch;
             use winit_core::event::ElementState::{Pressed, Released};
             use winit_core::event::{PointerKind, PointerSource};
@@ -2094,6 +2140,7 @@ unsafe fn public_window_callback_inner(
             } {
                 unsafe { inputs.set_len(pcount) };
                 for input in &inputs {
+                    let timestamp = clock.convert_ticks(input.dwTime);
                     let mut position = POINT { x: input.x / 100, y: input.y / 100 };
 
                     if unsafe { ScreenToClient(window, &mut position) } == false.into() {
@@ -2108,42 +2155,62 @@ unsafe fn public_window_callback_inner(
                     let primary = util::has_flag(input.dwFlags, TOUCHEVENTF_PRIMARY);
 
                     if util::has_flag(input.dwFlags, TOUCHEVENTF_DOWN) {
-                        userdata.send_window_event(window, WindowEvent::PointerEntered {
-                            device_id: None,
-                            primary,
-                            position,
-                            kind: PointerKind::Touch(finger_id),
-                        });
-                        userdata.send_window_event(window, WindowEvent::PointerButton {
-                            device_id: None,
-                            primary,
-                            state: Pressed,
-                            position,
-                            button: Touch { finger_id, force: None },
-                            is_macos_activation_click: false,
-                        });
+                        userdata.send_window_event_at(
+                            window,
+                            timestamp,
+                            WindowEvent::PointerEntered {
+                                device_id: None,
+                                primary,
+                                position,
+                                kind: PointerKind::Touch(finger_id),
+                            },
+                        );
+                        userdata.send_window_event_at(
+                            window,
+                            timestamp,
+                            WindowEvent::PointerButton {
+                                device_id: None,
+                                primary,
+                                state: Pressed,
+                                position,
+                                button: Touch { finger_id, force: None },
+                                is_macos_activation_click: false,
+                            },
+                        );
                     } else if util::has_flag(input.dwFlags, TOUCHEVENTF_UP) {
-                        userdata.send_window_event(window, WindowEvent::PointerButton {
-                            device_id: None,
-                            primary,
-                            state: Released,
-                            position,
-                            button: Touch { finger_id, force: None },
-                            is_macos_activation_click: false,
-                        });
-                        userdata.send_window_event(window, WindowEvent::PointerLeft {
-                            device_id: None,
-                            primary,
-                            position: Some(position),
-                            kind: PointerKind::Touch(finger_id),
-                        });
+                        userdata.send_window_event_at(
+                            window,
+                            timestamp,
+                            WindowEvent::PointerButton {
+                                device_id: None,
+                                primary,
+                                state: Released,
+                                position,
+                                button: Touch { finger_id, force: None },
+                                is_macos_activation_click: false,
+                            },
+                        );
+                        userdata.send_window_event_at(
+                            window,
+                            timestamp,
+                            WindowEvent::PointerLeft {
+                                device_id: None,
+                                primary,
+                                position: Some(position),
+                                kind: PointerKind::Touch(finger_id),
+                            },
+                        );
                     } else if util::has_flag(input.dwFlags, TOUCHEVENTF_MOVE) {
-                        userdata.send_window_event(window, WindowEvent::PointerMoved {
-                            device_id: None,
-                            primary,
-                            position,
-                            source: PointerSource::Touch { finger_id, force: None },
-                        });
+                        userdata.send_window_event_at(
+                            window,
+                            timestamp,
+                            WindowEvent::PointerMoved {
+                                device_id: None,
+                                primary,
+                                position,
+                                source: PointerSource::Touch { finger_id, force: None },
+                            },
+                        );
                     } else {
                         continue;
                     }
@@ -2154,6 +2221,7 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
+            let clock = PointerTimestamp::now();
             use winit_core::event::ElementState::{Pressed, Released};
             use winit_core::event::{ButtonSource, PointerKind, PointerSource};
 
@@ -2202,6 +2270,8 @@ unsafe fn public_window_callback_inner(
                 // The information retrieved appears in reverse chronological order, with the most
                 // recent entry in the first row of the returned array
                 for pointer_info in pointer_infos.iter().rev() {
+                    let timestamp =
+                        clock.convert_counter(pointer_info.PerformanceCount, pointer_info.dwTime);
                     let mut device_rect = mem::MaybeUninit::uninit();
                     let mut display_rect = mem::MaybeUninit::uninit();
 
@@ -2278,36 +2348,52 @@ unsafe fn public_window_callback_inner(
                         };
 
                         if is_down {
-                            userdata.send_window_event(window, WindowEvent::PointerEntered {
-                                device_id: None,
-                                primary,
-                                position,
-                                kind,
-                            });
+                            userdata.send_window_event_at(
+                                window,
+                                timestamp,
+                                WindowEvent::PointerEntered {
+                                    device_id: None,
+                                    primary,
+                                    position,
+                                    kind,
+                                },
+                            );
 
-                            userdata.send_window_event(window, WindowEvent::PointerButton {
-                                device_id: None,
-                                primary,
-                                state: Pressed,
-                                position,
-                                button,
-                                is_macos_activation_click: false,
-                            });
+                            userdata.send_window_event_at(
+                                window,
+                                timestamp,
+                                WindowEvent::PointerButton {
+                                    device_id: None,
+                                    primary,
+                                    state: Pressed,
+                                    position,
+                                    button,
+                                    is_macos_activation_click: false,
+                                },
+                            );
                         } else {
-                            userdata.send_window_event(window, WindowEvent::PointerButton {
-                                device_id: None,
-                                primary,
-                                state: Released,
-                                position,
-                                button,
-                                is_macos_activation_click: false,
-                            });
-                            userdata.send_window_event(window, WindowEvent::PointerLeft {
-                                device_id: None,
-                                primary,
-                                position: Some(position),
-                                kind,
-                            });
+                            userdata.send_window_event_at(
+                                window,
+                                timestamp,
+                                WindowEvent::PointerButton {
+                                    device_id: None,
+                                    primary,
+                                    state: Released,
+                                    position,
+                                    button,
+                                    is_macos_activation_click: false,
+                                },
+                            );
+                            userdata.send_window_event_at(
+                                window,
+                                timestamp,
+                                WindowEvent::PointerLeft {
+                                    device_id: None,
+                                    primary,
+                                    position: Some(position),
+                                    kind,
+                                },
+                            );
                         }
                     } else if util::has_flag(pointer_info.pointerFlags, POINTER_FLAG_UPDATE) {
                         let source = match pointer_info.pointerType {
@@ -2322,12 +2408,16 @@ unsafe fn public_window_callback_inner(
                             _ => PointerSource::Unknown,
                         };
 
-                        userdata.send_window_event(window, WindowEvent::PointerMoved {
-                            device_id: None,
-                            primary,
-                            position,
-                            source,
-                        });
+                        userdata.send_window_event_at(
+                            window,
+                            timestamp,
+                            WindowEvent::PointerMoved {
+                                device_id: None,
+                                primary,
+                                position,
+                                source,
+                            },
+                        );
                     } else {
                         continue;
                     }
@@ -2921,6 +3011,25 @@ fn inverted_wheel_delta(value: i16) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_timestamps_use_each_counter_sample() {
+        let clock =
+            PointerTimestamp { now: Instant::now(), counter: 2000, frequency: 1000, ticks: 100 };
+        assert_eq!(clock.convert_counter(1750, 0), clock.now - Duration::from_millis(250));
+        assert_eq!(clock.convert_counter(1500, 0), clock.now - Duration::from_millis(500));
+        assert_eq!(clock.convert_counter(2001, 0), clock.now);
+        assert_eq!(clock.convert_counter(0, 90), clock.now - Duration::from_millis(10));
+    }
+
+    #[test]
+    fn pointer_tick_timestamps_handle_wrap_and_future_samples() {
+        let clock = PointerTimestamp { now: Instant::now(), counter: 0, frequency: 0, ticks: 10 };
+        assert_eq!(clock.convert_ticks(u32::MAX - 9), clock.now - Duration::from_millis(20));
+        assert_eq!(clock.convert_ticks(11), clock.now);
+        assert_eq!(clock.convert_ticks(10), clock.now);
+        assert_eq!(clock.convert_counter(100, 0), clock.now - Duration::from_millis(10));
+    }
 
     #[test]
     fn inverted_wheel_delta_handles_minimum_value() {
