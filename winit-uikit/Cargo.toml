@@ -37,6 +37,8 @@ objc2-foundation = { workspace = true, features = [
     "block2",
     "objc2-core-foundation",
     "NSArray",
+    "NSData",
+    "NSDictionary",
     "NSEnumerator",
     "NSGeometry",
     "NSObjCRuntime",
@@ -44,6 +46,7 @@ objc2-foundation = { workspace = true, features = [
     "NSString",
     "NSThread",
     "NSSet",
+    "NSURL",
 ] }
 objc2-ui-kit = { workspace = true, features = [
     "std",
@@ -57,6 +60,7 @@ objc2-ui-kit = { workspace = true, features = [
     "UITextInputTraits",
     "UIOrientation",
     "UIPanGestureRecognizer",
+    "UIPasteboard",
     "UIPinchGestureRecognizer",
     "UIResponder",
     "UIRotationGestureRecognizer",

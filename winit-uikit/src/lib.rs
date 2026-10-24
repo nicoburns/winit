@@ -102,6 +102,7 @@
 #![warn(clippy::exhaustive_enums)]
 
 mod app_state;
+mod data_transfer;
 mod event_loop;
 mod monitor;
 mod view;
@@ -115,6 +116,7 @@ use serde::{Deserialize, Serialize};
 use winit_core::monitor::{MonitorHandle, VideoMode};
 use winit_core::window::{PlatformWindowAttributes, Window};
 
+pub use self::data_transfer::{Pasteboard, PasteboardType, PasteboardValue};
 pub use self::event_loop::{EventLoop, PlatformSpecificEventLoopAttributes};
 use self::monitor::MonitorHandle as UIKitMonitorHandle;
 use self::window::Window as UIKitWindow;

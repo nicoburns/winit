@@ -23,6 +23,7 @@ use winit_core::event::{StartCause, SurfaceSizeWriter, WindowEvent};
 use winit_core::event_loop::ControlFlow;
 use winit_core::window::WindowId;
 
+use crate::data_transfer::DataTransferState;
 use crate::event_loop::ActiveEventLoop;
 use crate::window::WinitUIWindow;
 
@@ -77,6 +78,7 @@ enum AppStateImpl {
 }
 
 pub(crate) struct AppState {
+    pub(crate) data_transfer: DataTransferState,
     state: Cell<AppStateImpl>,
     control_flow: Cell<ControlFlow>,
     waker: EventLoopWaker,
@@ -110,6 +112,7 @@ impl AppState {
         GLOBAL
             .get(mtm)
             .set(Self {
+                data_transfer: DataTransferState::default(),
                 state: Cell::new(AppStateImpl::Initial),
                 control_flow: Cell::new(ControlFlow::default()),
                 waker: EventLoopWaker::new(CFRunLoop::main().unwrap()),

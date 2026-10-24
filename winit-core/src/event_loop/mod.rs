@@ -338,6 +338,10 @@ pub trait ActiveEventLoop: Any + fmt::Debug {
     /// if focus could not be determined.
     ///
     /// The ID is only valid until the clipboard contents change.
+    ///
+    /// ## Platform-specific
+    ///
+    /// Implemented on Wayland, X11, macOS, Windows and iOS.
     fn clipboard(&self) -> Result<Option<DataTransferId>, TransferError> {
         Err(DATA_TRANSFER_NOT_SUPPORTED)
     }
@@ -350,6 +354,10 @@ pub trait ActiveEventLoop: Any + fmt::Debug {
     /// The data is sent lazily where supported by the platform: it is only encoded when another
     /// application requests one of the advertised types, and otherwise dropped once another
     /// application takes over the clipboard.
+    ///
+    /// ## Platform-specific
+    ///
+    /// Implemented on Wayland, X11, macOS, Windows and iOS. On iOS, data is encoded eagerly.
     fn set_clipboard(&self, send_data: Box<dyn DataTransferSend>) -> Result<(), TransferError> {
         let _ = send_data;
         Err(DATA_TRANSFER_NOT_SUPPORTED)

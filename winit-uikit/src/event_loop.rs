@@ -17,17 +17,20 @@ use winit_common::core_foundation::{MainRunLoop, MainRunLoopObserver, tracing_ob
 use winit_common::foundation::create_observer;
 use winit_core::application::ApplicationHandler;
 use winit_core::cursor::{CustomCursor, CustomCursorSource};
-use winit_core::error::{CreateWindowError, CustomCursorError, EventLoopError};
+use winit_core::data_transfer::{DataTransfer, DataTransferId, DataTransferSend, TransferType};
+use winit_core::error::{CreateWindowError, CustomCursorError, EventLoopError, TransferError};
+use winit_core::event::WindowEvent;
 use winit_core::event_loop::{
-    ActiveEventLoop as RootActiveEventLoop, ControlFlow, DeviceEvents, EventLoopProvider,
-    EventLoopProxy as CoreEventLoopProxy, OwnedDisplayHandle as CoreOwnedDisplayHandle,
+    ActiveEventLoop as RootActiveEventLoop, AsyncRequestSerial, ControlFlow, DeviceEvents,
+    EventLoopProvider, EventLoopProxy as CoreEventLoopProxy,
+    OwnedDisplayHandle as CoreOwnedDisplayHandle,
 };
 use winit_core::monitor::MonitorHandle as CoreMonitorHandle;
 use winit_core::window::{Theme, Window as CoreWindow};
 
 use super::app_state::{AppState, send_occluded_event_for_all_windows};
 use crate::monitor::MonitorHandle;
-use crate::window::Window;
+use crate::window::{Window, WinitUIWindow};
 use crate::{app_state, monitor};
 
 #[derive(Debug)]
@@ -36,6 +39,44 @@ pub struct ActiveEventLoop {
 }
 
 impl RootActiveEventLoop for ActiveEventLoop {
+    fn clipboard(&self) -> Result<Option<DataTransferId>, TransferError> {
+        Ok(AppState::get(self.mtm).data_transfer.clipboard(self.mtm))
+    }
+
+    fn set_clipboard(&self, send_data: Box<dyn DataTransferSend>) -> Result<(), TransferError> {
+        crate::data_transfer::set_clipboard(&*send_data, self.mtm)
+    }
+
+    fn data_transfer(&self, id: DataTransferId) -> Result<Box<dyn DataTransfer>, TransferError> {
+        Ok(Box::new(AppState::get(self.mtm).data_transfer.by_id(id, self.mtm)?))
+    }
+
+    fn fetch_data_transfer(
+        &self,
+        id: DataTransferId,
+        type_: &dyn TransferType,
+    ) -> Result<AsyncRequestSerial, TransferError> {
+        let pb = AppState::get(self.mtm).data_transfer.by_id(id, self.mtm)?;
+        let value = Arc::new(pb.with_type(type_)?);
+        let application = UIApplication::sharedApplication(self.mtm);
+        #[allow(deprecated)]
+        let windows = application.windows();
+        let mut windows =
+            windows.iter().filter_map(|window| window.downcast::<WinitUIWindow>().ok());
+        let first = windows.next().ok_or(TransferError::Failed)?;
+        let window = if first.isKeyWindow() {
+            first
+        } else {
+            windows.find(|window| window.isKeyWindow()).unwrap_or(first)
+        };
+        let serial = AsyncRequestSerial::get();
+        app_state::handle_nonuser_event(self.mtm, app_state::EventWrapper::Window {
+            window_id: window.id(),
+            event: WindowEvent::DataTransferReceived { id, serial, value },
+        });
+        Ok(serial)
+    }
+
     fn create_proxy(&self) -> CoreEventLoopProxy {
         CoreEventLoopProxy::new(AppState::get(self.mtm).event_loop_proxy().clone())
     }
