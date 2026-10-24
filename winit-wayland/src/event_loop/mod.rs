@@ -511,7 +511,12 @@ impl EventLoop {
                         // cannot process them against the state we just removed.
                         state.window_compositor_updates.retain(|update| update.window_id != w);
                     });
-                    app.window_event(&self.active_event_loop, w, WindowEvent::Destroyed);
+                    app.window_event(
+                        &self.active_event_loop,
+                        w,
+                        Instant::now(),
+                        WindowEvent::Destroyed,
+                    );
                 }
                 continue;
             }

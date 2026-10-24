@@ -556,6 +556,7 @@ impl RootActiveEventLoop for ActiveEventLoop {
 
         self.0.send_event(Event::Window {
             window_id,
+            timestamp: Instant::now(),
             event: WindowEvent::DataTransferReceived { id, serial, value: typed_data },
         });
 

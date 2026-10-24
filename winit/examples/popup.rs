@@ -63,6 +63,7 @@ fn main() -> Result<(), impl std::error::Error> {
             &mut self,
             event_loop: &dyn ActiveEventLoop,
             window_id: winit::window::WindowId,
+            _timestamp: winit::Instant,
             event: WindowEvent,
         ) {
             use winit::keyboard::{KeyCode, PhysicalKey};

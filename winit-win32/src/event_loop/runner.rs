@@ -181,11 +181,13 @@ impl EventLoopRunner {
 
             self.send_event(Event::Window {
                 window_id,
+                timestamp: Instant::now(),
                 event: WindowEvent::OutgoingDragDropped { id, action },
             });
         } else if hr == DRAGDROP_S_CANCEL {
             self.send_event(Event::Window {
                 window_id,
+                timestamp: Instant::now(),
                 event: WindowEvent::OutgoingDragCanceled { id },
             });
         } else {

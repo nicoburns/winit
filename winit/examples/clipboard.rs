@@ -53,6 +53,7 @@ impl ApplicationHandler for Application {
         &mut self,
         event_loop: &dyn ActiveEventLoop,
         _window_id: WindowId,
+        _timestamp: winit::Instant,
         event: WindowEvent,
     ) {
         match event {
