@@ -45,15 +45,15 @@ use windows_sys::Win32::UI::Input::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     EnumThreadWindows, GW_OWNER, GWL_STYLE, GWL_USERDATA, GetClientRect, GetCursorPos, GetMenu,
-    GetMessageTime, GetWindow, HTCAPTION, HTCLIENT, LoadCursorW, MINMAXINFO, MNC_CLOSE, MSG,
-    MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, NCCALCSIZE_PARAMS, PEN_FLAG_BARREL,
-    PEN_FLAG_ERASER, PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y,
-    PM_REMOVE, PT_PEN, PT_TOUCH, PeekMessageW, PostMessageW, QS_ALLINPUT, RI_MOUSE_HWHEEL,
-    RI_MOUSE_WHEEL, RegisterClassExW, RegisterWindowMessageA, SC_MINIMIZE, SC_RESTORE,
-    SIZE_MAXIMIZED, SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SetCursor, SetWindowPos, SystemParametersInfoW, TranslateMessage,
-    WHEEL_DELTA, WINDOWPOS, WM_CAPTURECHANGED, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED,
-    WM_ENTERSIZEMOVE, WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
+    GetWindow, HTCAPTION, HTCLIENT, LoadCursorW, MINMAXINFO, MNC_CLOSE, MSG, MWMO_INPUTAVAILABLE,
+    MsgWaitForMultipleObjectsEx, NCCALCSIZE_PARAMS, PEN_FLAG_BARREL, PEN_FLAG_ERASER,
+    PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y, PM_REMOVE, PT_PEN,
+    PT_TOUCH, PeekMessageW, PostMessageW, QS_ALLINPUT, RI_MOUSE_HWHEEL, RI_MOUSE_WHEEL,
+    RegisterClassExW, RegisterWindowMessageA, SC_MINIMIZE, SC_RESTORE, SIZE_MAXIMIZED,
+    SPI_GETWHEELSCROLLCHARS, SPI_GETWHEELSCROLLLINES, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SetCursor, SetWindowPos, SystemParametersInfoW, TranslateMessage, WHEEL_DELTA,
+    WINDOWPOS, WM_CAPTURECHANGED, WM_CLOSE, WM_CREATE, WM_DESTROY, WM_DPICHANGED, WM_ENTERSIZEMOVE,
+    WM_EXITSIZEMOVE, WM_GETMINMAXINFO, WM_IME_COMPOSITION, WM_IME_ENDCOMPOSITION,
     WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION, WM_INPUT, WM_INPUTLANGCHANGE, WM_KEYDOWN, WM_KEYUP,
     WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MENUCHAR,
     WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCCREATE,
@@ -123,19 +123,14 @@ pub(crate) struct WindowData {
     pub recurse_depth: Cell<u32>,
 }
 
-struct InputClock {
+struct PointerTimestamp {
     now: Instant,
     counter: u64,
     frequency: u64,
     ticks: u32,
 }
 
-impl InputClock {
-    fn message_time() -> Instant {
-        let ticks = unsafe { GetMessageTime() } as u32;
-        Self::now().convert_ticks(ticks)
-    }
-
+impl PointerTimestamp {
     fn now() -> Self {
         let mut counter = 0;
         let mut frequency = 0;
@@ -1158,7 +1153,7 @@ fn normalize_pointer_pressure(pressure: u32) -> Option<Force> {
 
 /// Emit a `ModifiersChanged` event whenever modifiers have changed.
 /// Returns the current modifier state
-fn update_modifiers(window: HWND, userdata: &WindowData, timestamp: Option<Instant>) {
+fn update_modifiers(window: HWND, userdata: &WindowData) {
     use winit_core::event::WindowEvent::ModifiersChanged;
 
     let modifiers = {
@@ -1173,18 +1168,14 @@ fn update_modifiers(window: HWND, userdata: &WindowData, timestamp: Option<Insta
         // Drop lock
         drop(window_state);
 
-        userdata.send_window_event_at(
-            window,
-            timestamp.unwrap_or_else(Instant::now),
-            ModifiersChanged(modifiers.into()),
-        );
+        userdata.send_window_event(window, ModifiersChanged(modifiers.into()));
     }
 }
 
 unsafe fn gain_active_focus(window: HWND, userdata: &WindowData) {
     use winit_core::event::WindowEvent::Focused;
 
-    update_modifiers(window, userdata, None);
+    update_modifiers(window, userdata);
 
     userdata.send_window_event(window, Focused(true));
 }
@@ -1306,19 +1297,10 @@ unsafe fn public_window_callback_inner(
 ) -> LRESULT {
     let mut result = ProcResult::DefWindowProc(wparam);
 
-    let timestamp = match msg {
-        WM_MOUSEMOVE | WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_LBUTTONDOWN | WM_LBUTTONUP
-        | WM_RBUTTONDOWN | WM_RBUTTONUP | WM_MBUTTONDOWN | WM_MBUTTONUP | WM_XBUTTONDOWN
-        | WM_XBUTTONUP | WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP => {
-            InputClock::message_time()
-        },
-        _ => Instant::now(),
-    };
-
     // Send new modifiers before sending key events.
     let mods_changed_callback = || match msg {
         WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
             result = ProcResult::Value(0);
         },
         _ => (),
@@ -1330,17 +1312,10 @@ unsafe fn public_window_callback_inner(
 
     let keyboard_callback = || {
         use winit_core::event::WindowEvent::KeyboardInput;
-        let events = userdata.key_event_builder.process_message(
-            window,
-            msg,
-            wparam,
-            lparam,
-            timestamp,
-            &mut result,
-        );
+        let events =
+            userdata.key_event_builder.process_message(window, msg, wparam, lparam, &mut result);
         for event in events {
-            let timestamp = if event.is_synthetic { Instant::now() } else { event.timestamp };
-            userdata.send_window_event_at(window, timestamp, KeyboardInput {
+            userdata.send_window_event(window, KeyboardInput {
                 device_id: None,
                 event: event.event,
                 is_synthetic: event.is_synthetic,
@@ -1857,7 +1832,7 @@ unsafe fn public_window_callback_inner(
                             .ok();
 
                         drop(w);
-                        userdata.send_window_event_at(window, timestamp, PointerEntered {
+                        userdata.send_window_event(window, PointerEntered {
                             device_id: None,
                             primary: true,
                             position,
@@ -1880,7 +1855,7 @@ unsafe fn public_window_callback_inner(
                             .ok();
 
                         drop(w);
-                        userdata.send_window_event_at(window, timestamp, PointerLeft {
+                        userdata.send_window_event(window, PointerLeft {
                             device_id: None,
                             primary: true,
                             position: Some(position),
@@ -1899,9 +1874,9 @@ unsafe fn public_window_callback_inner(
             }
 
             if cursor_moved {
-                update_modifiers(window, userdata, Some(timestamp));
+                update_modifiers(window, userdata);
 
-                userdata.send_window_event_at(window, timestamp, PointerMoved {
+                userdata.send_window_event(window, PointerMoved {
                     device_id: None,
                     primary: true,
                     position,
@@ -1937,7 +1912,7 @@ unsafe fn public_window_callback_inner(
             let value = (wparam >> 16) as i16;
             let value = value as f32 / WHEEL_DELTA as f32;
 
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
 
             let scroll_lines_multiplier = if userdata.window_state_lock().use_system_wheel_speed {
                 let mut scroll_lines = DEFAULT_SCROLL_LINES_PER_WHEEL_DELTA;
@@ -1958,7 +1933,7 @@ unsafe fn public_window_callback_inner(
                 1
             };
 
-            userdata.send_window_event_at(window, timestamp, WindowEvent::MouseWheel {
+            userdata.send_window_event(window, WindowEvent::MouseWheel {
                 device_id: None,
                 delta: LineDelta(0.0, value * scroll_lines_multiplier as f32),
                 phase: TouchPhase::Moved,
@@ -1974,7 +1949,7 @@ unsafe fn public_window_callback_inner(
             let value = (wparam >> 16) as i16;
             let value = inverted_wheel_delta(value); // NOTE: inverted! See https://github.com/rust-windowing/winit/pull/2105/
 
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
 
             let scroll_characters_multiplier =
                 if userdata.window_state_lock().use_system_wheel_speed {
@@ -1992,7 +1967,7 @@ unsafe fn public_window_callback_inner(
                     1
                 };
 
-            userdata.send_window_event_at(window, timestamp, WindowEvent::MouseWheel {
+            userdata.send_window_event(window, WindowEvent::MouseWheel {
                 device_id: None,
                 delta: LineDelta(value * scroll_characters_multiplier as f32, 0.0),
                 phase: TouchPhase::Moved,
@@ -2023,13 +1998,13 @@ unsafe fn public_window_callback_inner(
 
             unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
 
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
 
             let x = util::get_x_lparam(lparam as u32) as i32;
             let y = util::get_y_lparam(lparam as u32) as i32;
             let position = PhysicalPosition::new(x as f64, y as f64);
 
-            userdata.send_window_event_at(window, timestamp, PointerButton {
+            userdata.send_window_event(window, PointerButton {
                 device_id: None,
                 primary: true,
                 state: Pressed,
@@ -2053,13 +2028,13 @@ unsafe fn public_window_callback_inner(
 
             unsafe { release_mouse(userdata.window_state_lock()) };
 
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
 
             let x = util::get_x_lparam(lparam as u32) as i32;
             let y = util::get_y_lparam(lparam as u32) as i32;
             let position = PhysicalPosition::new(x as f64, y as f64);
 
-            userdata.send_window_event_at(window, timestamp, PointerButton {
+            userdata.send_window_event(window, PointerButton {
                 device_id: None,
                 primary: true,
                 state: Released,
@@ -2084,7 +2059,7 @@ unsafe fn public_window_callback_inner(
 
             unsafe { capture_mouse(window, &mut userdata.window_state_lock()) };
 
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
 
             let x = util::get_x_lparam(lparam as u32) as i32;
             let y = util::get_y_lparam(lparam as u32) as i32;
@@ -2093,7 +2068,7 @@ unsafe fn public_window_callback_inner(
             // 1 is defined as back, 2 as forward; other codes are unexpected.
             let b = xbutton as u8 + MouseButton::Back as u8 - 1;
 
-            userdata.send_window_event_at(window, timestamp, PointerButton {
+            userdata.send_window_event(window, PointerButton {
                 device_id: None,
                 primary: true,
                 state: Pressed,
@@ -2114,7 +2089,7 @@ unsafe fn public_window_callback_inner(
 
             unsafe { release_mouse(userdata.window_state_lock()) };
 
-            update_modifiers(window, userdata, Some(timestamp));
+            update_modifiers(window, userdata);
 
             let x = util::get_x_lparam(lparam as u32) as i32;
             let y = util::get_y_lparam(lparam as u32) as i32;
@@ -2123,7 +2098,7 @@ unsafe fn public_window_callback_inner(
             // 1 is defined as back, 2 as forward; other codes are unexpected.
             let b = xbutton as u8 + MouseButton::Back as u8 - 1;
 
-            userdata.send_window_event_at(window, timestamp, PointerButton {
+            userdata.send_window_event(window, PointerButton {
                 device_id: None,
                 primary: true,
                 state: Released,
@@ -2147,7 +2122,7 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_TOUCH => {
-            let clock = InputClock::now();
+            let clock = PointerTimestamp::now();
             use winit_core::event::ButtonSource::Touch;
             use winit_core::event::ElementState::{Pressed, Released};
             use winit_core::event::{PointerKind, PointerSource};
@@ -2246,7 +2221,7 @@ unsafe fn public_window_callback_inner(
         },
 
         WM_POINTERDOWN | WM_POINTERUPDATE | WM_POINTERUP => {
-            let clock = InputClock::now();
+            let clock = PointerTimestamp::now();
             use winit_core::event::ElementState::{Pressed, Released};
             use winit_core::event::{ButtonSource, PointerKind, PointerSource};
 
@@ -3039,7 +3014,8 @@ mod tests {
 
     #[test]
     fn pointer_timestamps_use_each_counter_sample() {
-        let clock = InputClock { now: Instant::now(), counter: 2000, frequency: 1000, ticks: 100 };
+        let clock =
+            PointerTimestamp { now: Instant::now(), counter: 2000, frequency: 1000, ticks: 100 };
         assert_eq!(clock.convert_counter(1750, 0), clock.now - Duration::from_millis(250));
         assert_eq!(clock.convert_counter(1500, 0), clock.now - Duration::from_millis(500));
         assert_eq!(clock.convert_counter(2001, 0), clock.now);
@@ -3048,20 +3024,11 @@ mod tests {
 
     #[test]
     fn pointer_tick_timestamps_handle_wrap_and_future_samples() {
-        let clock = InputClock { now: Instant::now(), counter: 0, frequency: 0, ticks: 10 };
+        let clock = PointerTimestamp { now: Instant::now(), counter: 0, frequency: 0, ticks: 10 };
         assert_eq!(clock.convert_ticks(u32::MAX - 9), clock.now - Duration::from_millis(20));
         assert_eq!(clock.convert_ticks(11), clock.now);
         assert_eq!(clock.convert_ticks(10), clock.now);
         assert_eq!(clock.convert_counter(100, 0), clock.now - Duration::from_millis(10));
-    }
-
-    #[test]
-    fn input_tick_timestamps_preserve_queued_spacing() {
-        let clock = InputClock { now: Instant::now(), counter: 0, frequency: 0, ticks: 1000 };
-        let first = clock.convert_ticks(100);
-        let second = clock.convert_ticks(125);
-        assert_eq!(second.duration_since(first), Duration::from_millis(25));
-        assert_eq!(clock.now.duration_since(first), Duration::from_millis(900));
     }
 
     #[test]
