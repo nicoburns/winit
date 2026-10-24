@@ -9,6 +9,8 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, OwnedDisplayHandle};
+#[cfg(web_platform)]
+use winit::platform::web::WindowAttributesWeb;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 #[path = "util/fill.rs"]
@@ -30,9 +32,11 @@ struct InputTimestamps {
 
 impl ApplicationHandler for InputTimestamps {
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let window = event_loop
-            .create_window(WindowAttributes::default().with_title("Input timestamps"))
-            .unwrap();
+        let attributes = WindowAttributes::default().with_title("Input timestamps");
+        #[cfg(web_platform)]
+        let attributes = attributes
+            .with_platform_attributes(Box::new(WindowAttributesWeb::default().with_append(true)));
+        let window = event_loop.create_window(attributes).unwrap();
         let context = Context::new(event_loop.owned_display_handle()).unwrap();
         self.surface = Some(Surface::new(&context, window).unwrap());
     }
