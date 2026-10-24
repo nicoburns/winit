@@ -495,100 +495,161 @@ impl WinitView {
         let now = Instant::now();
         let window = self.window().unwrap();
         let mut touch_events = Vec::new();
-        for touch in touches {
-            let touch_id = Retained::as_ptr(&touch) as usize;
-            let phase = touch.phase();
+        let samples = touches.iter().flat_map(|touch| {
             let samples = event
                 .and_then(|event| event.coalescedTouchesForTouch(&touch))
-                .filter(|samples| !samples.is_empty())
-                .map(|samples| samples.to_vec())
-                .unwrap_or_else(|| vec![touch]);
-            for touch in samples {
-                let timestamp =
-                    now - Duration::from_secs_f64((media_now - touch.timestamp()).max(0.0));
-                let logical_location = touch.locationInView(None);
-                let touch_type = touch.r#type();
-                let force = if available!(ios = 9.0, tvos = 9.0, visionos = 1.0) {
-                    let use_force = match touch_type {
-                        UITouchType::Pencil => true,
-                        _ => {
-                            let trait_collection = self.traitCollection();
-                            trait_collection.forceTouchCapability()
-                                == UIForceTouchCapability::Available
-                        },
-                    };
+                .filter(|samples| !samples.is_empty());
+            let fallback = samples.is_none().then(|| touch.clone());
+            samples.into_iter().flatten().chain(fallback).map(move |sample| (touch.clone(), sample))
+        });
+        for (touch, sample) in samples {
+            let timestamp =
+                now - Duration::from_secs_f64((media_now - sample.timestamp()).max(0.0));
+            let logical_location = sample.locationInView(None);
+            let touch_type = touch.r#type();
+            let force = if available!(ios = 9.0, tvos = 9.0, visionos = 1.0) {
+                let use_force = match touch_type {
+                    UITouchType::Pencil => true,
+                    _ => {
+                        let trait_collection = self.traitCollection();
+                        trait_collection.forceTouchCapability() == UIForceTouchCapability::Available
+                    },
+                };
 
-                    if use_force {
-                        let force = touch.force();
-                        let max_possible_force = touch.maximumPossibleForce();
-                        Some(Force::Calibrated {
-                            force: force as _,
-                            max_possible_force: max_possible_force as _,
-                        })
-                    } else {
-                        None
-                    }
+                if use_force {
+                    let force = sample.force();
+                    let max_possible_force = sample.maximumPossibleForce();
+                    Some(Force::Calibrated {
+                        force: force as _,
+                        max_possible_force: max_possible_force as _,
+                    })
                 } else {
                     None
-                };
-                let position = {
-                    let scale_factor = self.contentScaleFactor();
-                    PhysicalPosition::from_logical::<(f64, f64), f64>(
-                        (logical_location.x as _, logical_location.y as _),
-                        scale_factor as f64,
-                    )
-                };
-                let window_id = window.id();
-                let finger_id = FingerId::from_raw(touch_id);
+                }
+            } else {
+                None
+            };
+            let touch_id = Retained::as_ptr(&touch) as usize;
+            let phase = touch.phase();
+            let position = {
+                let scale_factor = self.contentScaleFactor();
+                PhysicalPosition::from_logical::<(f64, f64), f64>(
+                    (logical_location.x as _, logical_location.y as _),
+                    scale_factor as f64,
+                )
+            };
+            let window_id = window.id();
+            let finger_id = FingerId::from_raw(touch_id);
 
-                let ivars = self.ivars();
+            let ivars = self.ivars();
 
-                match phase {
-                    UITouchPhase::Began => {
-                        let primary = if let UITouchType::Pencil = touch_type {
-                            true
-                        } else {
-                            ivars.fingers.set(ivars.fingers.get() + 1);
-                            // Keep the primary finger around until we clear all the fingers to
-                            // recognize it when user briefly removes it.
-                            match ivars.primary_finger.get() {
-                                Some(primary_id) => primary_id == finger_id,
-                                None => {
-                                    debug_assert_eq!(
-                                        ivars.fingers.get(),
-                                        1,
-                                        "number of fingers were not counted correctly"
-                                    );
-                                    ivars.primary_finger.set(Some(finger_id));
-                                    true
-                                },
-                            }
-                        };
-
-                        touch_events.push(EventWrapper::Window {
-                            timestamp,
-                            window_id,
-                            event: WindowEvent::PointerEntered {
-                                device_id: None,
-                                primary,
-                                position,
-                                kind: if let UITouchType::Pencil = touch_type {
-                                    PointerKind::TabletTool(TabletToolKind::Pencil)
-                                } else {
-                                    PointerKind::Touch(finger_id)
-                                },
+            match phase {
+                UITouchPhase::Began => {
+                    let primary = if let UITouchType::Pencil = touch_type {
+                        true
+                    } else {
+                        ivars.fingers.set(ivars.fingers.get() + 1);
+                        // Keep the primary finger around until we clear all the fingers to
+                        // recognize it when user briefly removes it.
+                        match ivars.primary_finger.get() {
+                            Some(primary_id) => primary_id == finger_id,
+                            None => {
+                                debug_assert_eq!(
+                                    ivars.fingers.get(),
+                                    1,
+                                    "number of fingers were not counted correctly"
+                                );
+                                ivars.primary_finger.set(Some(finger_id));
+                                true
                             },
-                        });
+                        }
+                    };
+
+                    touch_events.push(EventWrapper::Window {
+                        timestamp,
+                        window_id,
+                        event: WindowEvent::PointerEntered {
+                            device_id: None,
+                            primary,
+                            position,
+                            kind: if let UITouchType::Pencil = touch_type {
+                                PointerKind::TabletTool(TabletToolKind::Pencil)
+                            } else {
+                                PointerKind::Touch(finger_id)
+                            },
+                        },
+                    });
+                    touch_events.push(EventWrapper::Window {
+                        timestamp,
+                        window_id,
+                        event: WindowEvent::PointerButton {
+                            device_id: None,
+                            primary,
+                            state: ElementState::Pressed,
+                            position,
+                            button: if let UITouchType::Pencil = touch_type {
+                                let tool_data = self.tablet_tool_data_for_pencil(&sample);
+                                ButtonSource::TabletTool {
+                                    kind: TabletToolKind::Pencil,
+                                    button: TabletToolButton::Contact,
+                                    data: tool_data,
+                                }
+                            } else {
+                                ButtonSource::Touch { finger_id, force }
+                            },
+                            is_macos_activation_click: false,
+                        },
+                    });
+                },
+                UITouchPhase::Moved => {
+                    let (primary, source) = if let UITouchType::Pencil = touch_type {
+                        let tool_data = self.tablet_tool_data_for_pencil(&sample);
+                        (true, PointerSource::TabletTool {
+                            kind: TabletToolKind::Pencil,
+                            data: tool_data,
+                        })
+                    } else {
+                        (ivars.primary_finger.get().unwrap() == finger_id, PointerSource::Touch {
+                            finger_id,
+                            force,
+                        })
+                    };
+
+                    touch_events.push(EventWrapper::Window {
+                        timestamp,
+                        window_id,
+                        event: WindowEvent::PointerMoved {
+                            device_id: None,
+                            primary,
+                            position,
+                            source,
+                        },
+                    });
+                },
+                // 2 is UITouchPhase::Stationary and is not expected here
+                UITouchPhase::Ended | UITouchPhase::Cancelled => {
+                    let primary = if let UITouchType::Pencil = touch_type {
+                        true
+                    } else {
+                        ivars.fingers.set(ivars.fingers.get() - 1);
+                        let primary = ivars.primary_finger.get().unwrap() == finger_id;
+                        if ivars.fingers.get() == 0 {
+                            ivars.primary_finger.set(None);
+                        }
+                        primary
+                    };
+
+                    if let UITouchPhase::Ended = phase {
                         touch_events.push(EventWrapper::Window {
                             timestamp,
                             window_id,
                             event: WindowEvent::PointerButton {
                                 device_id: None,
                                 primary,
-                                state: ElementState::Pressed,
+                                state: ElementState::Released,
                                 position,
                                 button: if let UITouchType::Pencil = touch_type {
-                                    let tool_data = self.tablet_tool_data_for_pencil(&touch);
+                                    let tool_data = self.tablet_tool_data_for_pencil(&sample);
                                     ButtonSource::TabletTool {
                                         kind: TabletToolKind::Pencil,
                                         button: TabletToolButton::Contact,
@@ -600,86 +661,24 @@ impl WinitView {
                                 is_macos_activation_click: false,
                             },
                         });
-                    },
-                    UITouchPhase::Moved => {
-                        let (primary, source) = if let UITouchType::Pencil = touch_type {
-                            let tool_data = self.tablet_tool_data_for_pencil(&touch);
-                            (true, PointerSource::TabletTool {
-                                kind: TabletToolKind::Pencil,
-                                data: tool_data,
-                            })
-                        } else {
-                            (
-                                ivars.primary_finger.get().unwrap() == finger_id,
-                                PointerSource::Touch { finger_id, force },
-                            )
-                        };
+                    }
 
-                        touch_events.push(EventWrapper::Window {
-                            timestamp,
-                            window_id,
-                            event: WindowEvent::PointerMoved {
-                                device_id: None,
-                                primary,
-                                position,
-                                source,
+                    touch_events.push(EventWrapper::Window {
+                        timestamp,
+                        window_id,
+                        event: WindowEvent::PointerLeft {
+                            device_id: None,
+                            primary,
+                            position: Some(position),
+                            kind: if let UITouchType::Pencil = touch_type {
+                                PointerKind::TabletTool(TabletToolKind::Pencil)
+                            } else {
+                                PointerKind::Touch(finger_id)
                             },
-                        });
-                    },
-                    // 2 is UITouchPhase::Stationary and is not expected here
-                    UITouchPhase::Ended | UITouchPhase::Cancelled => {
-                        let primary = if let UITouchType::Pencil = touch_type {
-                            true
-                        } else {
-                            ivars.fingers.set(ivars.fingers.get() - 1);
-                            let primary = ivars.primary_finger.get().unwrap() == finger_id;
-                            if ivars.fingers.get() == 0 {
-                                ivars.primary_finger.set(None);
-                            }
-                            primary
-                        };
-
-                        if let UITouchPhase::Ended = phase {
-                            touch_events.push(EventWrapper::Window {
-                                timestamp,
-                                window_id,
-                                event: WindowEvent::PointerButton {
-                                    device_id: None,
-                                    primary,
-                                    state: ElementState::Released,
-                                    position,
-                                    button: if let UITouchType::Pencil = touch_type {
-                                        let tool_data = self.tablet_tool_data_for_pencil(&touch);
-                                        ButtonSource::TabletTool {
-                                            kind: TabletToolKind::Pencil,
-                                            button: TabletToolButton::Contact,
-                                            data: tool_data,
-                                        }
-                                    } else {
-                                        ButtonSource::Touch { finger_id, force }
-                                    },
-                                    is_macos_activation_click: false,
-                                },
-                            });
-                        }
-
-                        touch_events.push(EventWrapper::Window {
-                            timestamp,
-                            window_id,
-                            event: WindowEvent::PointerLeft {
-                                device_id: None,
-                                primary,
-                                position: Some(position),
-                                kind: if let UITouchType::Pencil = touch_type {
-                                    PointerKind::TabletTool(TabletToolKind::Pencil)
-                                } else {
-                                    PointerKind::Touch(finger_id)
-                                },
-                            },
-                        });
-                    },
-                    _ => panic!("unexpected touch phase: {phase:?}"),
-                }
+                        },
+                    });
+                },
+                _ => panic!("unexpected touch phase: {phase:?}"),
             }
         }
         let mtm = MainThreadMarker::new().unwrap();
