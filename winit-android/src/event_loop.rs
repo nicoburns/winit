@@ -41,6 +41,25 @@ fn min_timeout(a: Option<Duration>, b: Option<Duration>) -> Option<Duration> {
     a.map_or(b, |a_timeout| b.map_or(Some(a_timeout), |b_timeout| Some(a_timeout.min(b_timeout))))
 }
 
+struct InputTimestamp {
+    instant: Instant,
+    monotonic_ns: i64,
+}
+
+impl InputTimestamp {
+    fn now() -> Self {
+        let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        let result = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut time) };
+        assert_eq!(result, 0, "CLOCK_MONOTONIC is unavailable");
+        Self { instant: Instant::now(), monotonic_ns: time.tv_sec * 1_000_000_000 + time.tv_nsec }
+    }
+
+    fn convert(&self, timestamp_ns: i64) -> Instant {
+        let age_ns = self.monotonic_ns.saturating_sub(timestamp_ns).max(0) as u64;
+        self.instant.checked_sub(Duration::from_nanos(age_ns)).unwrap_or(self.instant)
+    }
+}
+
 #[derive(Clone, Debug)]
 struct SharedFlagSetter {
     flag: Arc<AtomicBool>,
@@ -323,8 +342,43 @@ impl EventLoop {
         let mut input_status = InputStatus::Handled;
         match event {
             InputEvent::MotionEvent(motion_event) => {
+                let clock = InputTimestamp::now();
+                let timestamp = clock.convert(motion_event.event_time());
                 let device_id = Some(DeviceId::from_raw(motion_event.device_id() as i64));
                 let action = motion_event.action();
+
+                if action == MotionAction::Move {
+                    let history_size =
+                        motion_event.pointers().next().map_or(0, |p| p.history().len());
+                    for index in 0..history_size {
+                        for pointer in motion_event.pointers() {
+                            let sample = pointer.history().nth(index).unwrap();
+                            let finger_id = FingerId::from_raw(pointer.pointer_id() as usize);
+                            let force = Some(Force::Normalized(sample.pressure() as f64));
+                            let source = match pointer.tool_type() {
+                                android_activity::input::ToolType::Finger => {
+                                    event::PointerSource::Touch { finger_id, force }
+                                },
+                                android_activity::input::ToolType::Mouse => continue,
+                                _ => event::PointerSource::Unknown,
+                            };
+                            app.window_event(
+                                &self.window_target,
+                                GLOBAL_WINDOW,
+                                clock.convert(sample.event_time()),
+                                event::WindowEvent::PointerMoved {
+                                    device_id,
+                                    primary: self.primary_pointer == Some(finger_id),
+                                    position: PhysicalPosition::new(
+                                        sample.x() as f64,
+                                        sample.y() as f64,
+                                    ),
+                                    source,
+                                },
+                            );
+                        }
+                    }
+                }
 
                 let pointers: Option<
                     Box<dyn Iterator<Item = android_activity::input::Pointer<'_>>>,
@@ -371,12 +425,7 @@ impl EventLoop {
                                     _ => event::PointerKind::Unknown,
                                 },
                             };
-                            app.window_event(
-                                &self.window_target,
-                                GLOBAL_WINDOW,
-                                Instant::now(),
-                                event,
-                            );
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, timestamp, event);
                             let event = event::WindowEvent::PointerButton {
                                 device_id,
                                 primary,
@@ -392,12 +441,7 @@ impl EventLoop {
                                 },
                                 is_macos_activation_click: false,
                             };
-                            app.window_event(
-                                &self.window_target,
-                                GLOBAL_WINDOW,
-                                Instant::now(),
-                                event,
-                            );
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, timestamp, event);
                         },
                         MotionAction::Move => {
                             let primary = self.primary_pointer == Some(finger_id);
@@ -414,12 +458,7 @@ impl EventLoop {
                                     _ => event::PointerSource::Unknown,
                                 },
                             };
-                            app.window_event(
-                                &self.window_target,
-                                GLOBAL_WINDOW,
-                                Instant::now(),
-                                event,
-                            );
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, timestamp, event);
                         },
                         MotionAction::Up | MotionAction::PointerUp | MotionAction::Cancel => {
                             let primary = action == MotionAction::Up
@@ -449,7 +488,7 @@ impl EventLoop {
                                 app.window_event(
                                     &self.window_target,
                                     GLOBAL_WINDOW,
-                                    Instant::now(),
+                                    timestamp,
                                     event,
                                 );
                             }
@@ -467,18 +506,14 @@ impl EventLoop {
                                     _ => event::PointerKind::Unknown,
                                 },
                             };
-                            app.window_event(
-                                &self.window_target,
-                                GLOBAL_WINDOW,
-                                Instant::now(),
-                                event,
-                            );
+                            app.window_event(&self.window_target, GLOBAL_WINDOW, timestamp, event);
                         },
                         _ => unreachable!(),
                     }
                 }
             },
             InputEvent::KeyEvent(key) => {
+                let timestamp = InputTimestamp::now().convert(key.event_time());
                 match key.key_code() {
                     // Flag keys related to volume as unhandled. While winit does not have a way for
                     // applications to configure what keys to flag as handled,
@@ -524,7 +559,7 @@ impl EventLoop {
                             is_synthetic: false,
                         };
 
-                        app.window_event(&self.window_target, GLOBAL_WINDOW, Instant::now(), event);
+                        app.window_event(&self.window_target, GLOBAL_WINDOW, timestamp, event);
                     },
                 }
             },

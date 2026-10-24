@@ -206,7 +206,9 @@ pub trait ApplicationHandler {
     /// - **Wayland:** the `time` field on `wl_pointer` / `wl_keyboard` / `wl_touch` and
     ///   `utime_hi`/`utime_lo` on `zwp_relative_pointer_v1`, calibrated the same way.
     /// - **Windows:** [`Instant::now()`] sampled inside `WindowProc`.
-    /// - **Android / iOS / Web / Orbital:** [`Instant::now()`].
+    /// - **Android:** Motion and key event times (including historical motion samples), converted
+    ///   from `CLOCK_MONOTONIC` nanoseconds to [`Instant`]. Other events use [`Instant::now()`].
+    /// - **iOS / Web / Orbital:** [`Instant::now()`].
     fn window_event(
         &mut self,
         event_loop: &dyn ActiveEventLoop,
